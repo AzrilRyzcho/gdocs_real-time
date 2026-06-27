@@ -26,3 +26,6 @@ Route::post('/documents/{document}/cursor', [DocumentController::class, 'cursor'
 
 // Broadcast konten real-time TANPA save ke DB (sangat cepat)
 Route::post('/documents/{document}/broadcast', [DocumentController::class, 'broadcastOnly'])->name('documents.broadcast');
+
+// Presence: user join/leave/heartbeat
+Route::post('/documents/{document}/presence', [DocumentController::class, 'presence'])->name('documents.presence');

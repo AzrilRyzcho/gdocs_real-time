@@ -89,6 +89,30 @@ class DocumentController extends Controller
     }
 
     /**
+     * Presence: broadcast status join/leave/ping user.
+     * Dipanggil saat user buka dokumen, tiap 10 detik (ping), dan saat tutup tab.
+     */
+    public function presence(Request $request, Document $document): JsonResponse
+    {
+        $validated = $request->validate([
+            'user_id'   => 'required|string',
+            'user_name' => 'required|string|max:50',
+            'color'     => 'required|string|max:20',
+            'action'    => 'required|in:join,leave,ping',
+        ]);
+
+        broadcast(new \App\Events\UserPresence(
+            documentId: $document->id,
+            userId:     $validated['user_id'],
+            userName:   $validated['user_name'],
+            color:      $validated['color'],
+            action:     $validated['action'],
+        ));
+
+        return response()->json(['status' => 'ok']);
+    }
+
+    /**
      * Broadcast konten real-time ke semua listener TANPA menyimpan ke DB.
      * Dipanggil setiap keystroke (~50ms debounce) untuk efek real-time.
      */

@@ -570,9 +570,10 @@ const CSRF        = document.querySelector('meta[name="csrf-token"]').content;
 const REVERB_KEY  = '{{ env("REVERB_APP_KEY") }}';
 const REVERB_HOST = window.location.hostname;
 const REVERB_PORT = {{ env("REVERB_PORT", 8080) }};
-const BROADCAST_URL = '/documents/{{ $document->id }}/broadcast';
-const SAVE_URL      = '/documents/{{ $document->id }}';
-const CURSOR_URL    = '/documents/{{ $document->id }}/cursor';
+const BROADCAST_URL  = '/documents/{{ $document->id }}/broadcast';
+const SAVE_URL       = '/documents/{{ $document->id }}';
+const CURSOR_URL     = '/documents/{{ $document->id }}/cursor';
+const PRESENCE_URL   = '/documents/{{ $document->id }}/presence';
 
 // ════════════════════════════════════════════════════════════════
 //  UTILS
@@ -627,7 +628,26 @@ function boot(name) {
   renderAll();
   logActivity('join', myName, myColor, 'bergabung ke dokumen');
   loadEcho();   // mulai koneksi WebSocket
+  sendPresence('join');
+  // Heartbeat setiap 8 detik — beri tahu device lain kita masih online
+  window._heartbeat = setInterval(() => sendPresence('ping'), 8000);
 }
+
+// ── Kirim status kehadiran ke server ──────────────────────────
+function sendPresence(action) {
+  if (!myId) return;
+  fetch(PRESENCE_URL, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': CSRF },
+    body:    JSON.stringify({ user_id: myId, user_name: myName, color: myColor, action }),
+  }).catch(() => {});
+}
+
+// Saat tab/browser ditutup → broadcast 'leave'
+window.addEventListener('beforeunload', () => {
+  sendPresence('leave');
+  clearInterval(window._heartbeat);
+});
 
 // Auto-boot jika nama sudah ada
 const _sn = localStorage.getItem('gdocs_name');
@@ -1088,6 +1108,47 @@ function connectReverb() {
     // ── Terima perubahan konten dari device lain ──────────────
     ch.listen('.document.updated', data => {
       applyRemoteChange(data);
+    });
+
+    // ── Terima status kehadiran (join/leave/ping) ─────────────
+    ch.listen('.user.presence', data => {
+      if (data.user_id === myId) return;   // abaikan event sendiri
+
+      if (data.action === 'join' || data.action === 'ping') {
+        const isNew = !users[data.user_id];
+        users[data.user_id] = {
+          name:     data.user_name,
+          color:    data.color || nextColor(),
+          isTyping: users[data.user_id]?.isTyping || false,
+          lastSeen: Date.now(),
+        };
+        if (isNew) {
+          logActivity('join', data.user_name, users[data.user_id].color, 'bergabung ke dokumen');
+          snack(`👋 ${data.user_name} bergabung`);
+        }
+        renderAll();
+
+        // Reset timer offline untuk user ini
+        clearTimeout(window._offlineTimers?.[data.user_id]);
+        if (!window._offlineTimers) window._offlineTimers = {};
+        // Kalau 20 detik tidak ada ping → anggap offline
+        window._offlineTimers[data.user_id] = setTimeout(() => {
+          if (users[data.user_id]) {
+            logActivity('leave', users[data.user_id].name, users[data.user_id].color, 'meninggalkan dokumen');
+            delete users[data.user_id];
+            renderAll();
+          }
+        }, 20000);
+
+      } else if (data.action === 'leave') {
+        if (users[data.user_id]) {
+          logActivity('leave', users[data.user_id].name, users[data.user_id].color, 'meninggalkan dokumen');
+          snack(`👋 ${users[data.user_id].name} keluar`);
+          delete users[data.user_id];
+          renderAll();
+        }
+        clearTimeout(window._offlineTimers?.[data.user_id]);
+      }
     });
 
     // ── Terima posisi kursor dari device lain ─────────────────
