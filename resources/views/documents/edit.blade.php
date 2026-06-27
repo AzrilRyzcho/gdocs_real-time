@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="id">
 <head>
 <meta charset="UTF-8">
@@ -264,6 +264,36 @@ html,body{height:100%;overflow:hidden;font-family:'Arial',sans-serif;font-size:1
 
 ::-webkit-scrollbar{width:6px;height:6px;}
 ::-webkit-scrollbar-thumb{background:#c0c0c0;border-radius:3px;}
+
+/* ── REMOTE CURSORS ── */
+.remote-cursor-wrap{
+  position:absolute;
+  pointer-events:none;
+  z-index:50;
+}
+.remote-cursor-caret{
+  position:absolute;
+  width:2px;
+  top:0;
+  bottom:0;
+  animation:rcaret 1.1s ease-in-out infinite;
+}
+@keyframes rcaret{0%,100%{opacity:1}50%{opacity:.3}}
+.remote-cursor-label{
+  position:absolute;
+  top:-22px;
+  left:0;
+  padding:2px 7px;
+  border-radius:3px 3px 3px 0;
+  font-size:11px;
+  font-weight:600;
+  color:#fff;
+  white-space:nowrap;
+  line-height:18px;
+  pointer-events:none;
+  transform:translateX(0);
+  box-shadow:0 1px 4px rgba(0,0,0,.2);
+}
 </style>
 </head>
 <body style="display:flex;flex-direction:column;height:100vh;">
@@ -511,6 +541,7 @@ html,body{height:100%;overflow:hidden;font-family:'Arial',sans-serif;font-size:1
 // ── CONFIG ────────────────────────────────────────────────────────
 const DOC_ID     = {{ $document->id }};
 const UPDATE_URL = '/documents/{{ $document->id }}';
+const CURSOR_URL = '/documents/{{ $document->id }}/cursor';
 const CSRF       = document.querySelector('meta[name="csrf-token"]').content;
 const REVERB_KEY  = '{{ env("REVERB_APP_KEY") }}';
 const REVERB_HOST = window.location.hostname;
@@ -752,7 +783,9 @@ function connectReverb(){
       wsHost:REVERB_HOST,wsPort:REVERB_PORT,wssPort:REVERB_PORT,
       forceTLS:false,enabledTransports:['ws'],disableStats:true,
     });
-    window.Echo.channel(`document.${DOC_ID}`).listen('.document.updated',data=>{
+    const ch = window.Echo.channel(document.${DOC_ID});
+
+    ch.listen('.document.updated',data=>{
       if(data.editor_id===myId)return;
       if(!onlineUsers[data.editor_id]){
         onlineUsers[data.editor_id]={name:data.editor_name,color:nextColor(),isTyping:false};
@@ -769,8 +802,22 @@ function connectReverb(){
       if(data.title!==titleInput.value){titleInput.value=data.title;document.title=data.title+' - GDocs';}
       setSave('saved');
       addActivity('edit',data.editor_name,onlineUsers[data.editor_id].color,'mengedit dokumen');
-      showSnack(`✏️ ${data.editor_name} sedang mengedit...`);
     });
+
+    ch.listen('.cursor.moved',data=>{
+      if(data.editor_id===myId)return;
+      if(!onlineUsers[data.editor_id]){
+        const c=data.color||nextColor();
+        onlineUsers[data.editor_id]={name:data.editor_name,color:c,isTyping:false};
+        addActivity('join',data.editor_name,c,'bergabung ke dokumen');
+        renderAll();
+      }
+      renderRemoteCursor(data.editor_id,data.editor_name,data.color,data.offset);
+      setTyping(data.editor_id,data.is_typing);
+      clearTimeout(typingTimers[data.editor_id]);
+      typingTimers[data.editor_id]=setTimeout(()=>setTyping(data.editor_id,false),3000);
+    });
+
     showSnack('🟢 Terhubung — siap kolaborasi!');
   }catch(e){showSnack('⚠️ Mode offline — perubahan tetap tersimpan');}
 }
@@ -787,6 +834,141 @@ function restoreCaretPos(c,pos){
     try{w(c);}catch(e){if(e!==0)console.error(e);}
   }catch{}
 }
+
+// ── REMOTE CURSORS ────────────────────────────────────────────────
+// remoteCursors: { editorId: { name, color, offset, el } }
+const remoteCursors = {};
+const cursorHideTimers = {};
+
+/**
+ * Dapatkan koordinat (x,y,h) dari offset karakter di dalam editor
+ * dengan membuat Range sementara.
+ */
+function getCaretCoords(editorEl, offset) {
+  try {
+    let pos = 0;
+    const range = document.createRange();
+    let found = false;
+
+    function walk(node) {
+      if (found) return;
+      if (node.nodeType === Node.TEXT_NODE) {
+        const len = node.length;
+        if (pos + len >= offset) {
+          range.setStart(node, offset - pos);
+          range.collapse(true);
+          found = true;
+          return;
+        }
+        pos += len;
+      } else {
+        for (const child of node.childNodes) walk(child);
+      }
+    }
+    walk(editorEl);
+    if (!found) {
+      // Tempel di akhir
+      range.selectNodeContents(editorEl);
+      range.collapse(false);
+    }
+
+    const rect  = range.getBoundingClientRect();
+    const eRect = editorEl.getBoundingClientRect();
+    return {
+      x: rect.left - eRect.left,
+      y: rect.top  - eRect.top,
+      h: rect.height || 18,
+    };
+  } catch { return null; }
+}
+
+/**
+ * Render atau update kursor remote satu user.
+ */
+function renderRemoteCursor(id, name, color, offset) {
+  const editorEl = document.getElementById('editor');
+  const page     = document.querySelector('.page-sheet');
+  if (!page) return;
+
+  // Pastikan elemen wrapper ada
+  if (!remoteCursors[id]) {
+    const wrap  = document.createElement('div');
+    wrap.className = 'remote-cursor-wrap';
+    wrap.id = 'rcursor_' + id;
+
+    const caret = document.createElement('div');
+    caret.className = 'remote-cursor-caret';
+    caret.style.background = color;
+    caret.style.width = '2px';
+
+    const label = document.createElement('div');
+    label.className = 'remote-cursor-label';
+    label.style.background = color;
+    label.textContent = name;
+
+    wrap.appendChild(caret);
+    wrap.appendChild(label);
+    page.appendChild(wrap);          // append ke .page-sheet (position:relative)
+    remoteCursors[id] = { name, color, offset, el: wrap };
+  }
+
+  const wrap = remoteCursors[id].el;
+  const coords = getCaretCoords(editorEl, offset);
+  if (!coords) return;
+
+  // page-sheet padding-left = 96px, editor offsetTop dalam page
+  const eRect    = editorEl.getBoundingClientRect();
+  const pageRect = page.getBoundingClientRect();
+  const x = eRect.left - pageRect.left + coords.x;
+  const y = eRect.top  - pageRect.top  + coords.y;
+
+  wrap.style.left    = x + 'px';
+  wrap.style.top     = y + 'px';
+  wrap.style.display = 'block';
+
+  const caret = wrap.querySelector('.remote-cursor-caret');
+  caret.style.height = coords.h + 'px';
+
+  // Auto-sembunyikan label setelah 3 detik tidak aktif
+  clearTimeout(cursorHideTimers[id]);
+  cursorHideTimers[id] = setTimeout(() => {
+    if (wrap) wrap.style.display = 'none';
+  }, 4000);
+}
+
+function removeRemoteCursor(id) {
+  if (remoteCursors[id]) {
+    remoteCursors[id].el.remove();
+    delete remoteCursors[id];
+  }
+}
+
+// ── BROADCAST KURSOR LOKAL ────────────────────────────────────────
+let cursorBroadcastTimer = null;
+
+function broadcastCursor(isTyping) {
+  if (!myId) return;
+  const offset = saveCaretPos(document.getElementById('editor')) || 0;
+  clearTimeout(cursorBroadcastTimer);
+  cursorBroadcastTimer = setTimeout(() => {
+    fetch(CURSOR_URL, {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', 'X-CSRF-TOKEN': CSRF },
+      body: JSON.stringify({
+        editor_id:   myId,
+        editor_name: myName,
+        color:       myColor,
+        offset:      offset,
+        is_typing:   isTyping,
+      }),
+    }).catch(() => {});
+  }, 80); // debounce 80ms
+}
+
+// Tambahkan event listener setelah editor siap
+document.getElementById('editor').addEventListener('keyup',   () => broadcastCursor(true));
+document.getElementById('editor').addEventListener('mouseup', () => broadcastCursor(false));
+document.getElementById('editor').addEventListener('click',   () => broadcastCursor(false));
 </script>
 </body>
 </html>

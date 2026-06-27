@@ -20,3 +20,6 @@ Route::patch('/documents/{document}', [DocumentController::class, 'update'])->na
 
 // Hapus dokumen
 Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->name('documents.destroy');
+
+// Broadcast posisi kursor
+Route::post('/documents/{document}/cursor', [DocumentController::class, 'cursor'])->name('documents.cursor');

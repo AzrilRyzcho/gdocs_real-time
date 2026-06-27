@@ -87,4 +87,29 @@ class DocumentController extends Controller
         $document->delete();
         return redirect()->route('documents.index');
     }
+
+    /**
+     * Broadcast posisi kursor user ke semua listener.
+     */
+    public function cursor(Request $request, Document $document): JsonResponse
+    {
+        $validated = $request->validate([
+            'editor_id'   => 'required|string',
+            'editor_name' => 'required|string|max:50',
+            'color'       => 'required|string|max:20',
+            'offset'      => 'required|integer|min:0',
+            'is_typing'   => 'boolean',
+        ]);
+
+        broadcast(new \App\Events\CursorMoved(
+            documentId: $document->id,
+            editorId:   $validated['editor_id'],
+            editorName: $validated['editor_name'],
+            color:      $validated['color'],
+            offset:     $validated['offset'],
+            isTyping:   $validated['is_typing'] ?? false,
+        ));
+
+        return response()->json(['status' => 'ok']);
+    }
 }
