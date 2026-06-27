@@ -253,7 +253,7 @@ html,body{height:100%;overflow:hidden;font-family:'Arial',sans-serif;font-size:1
 #snackbar.show{transform:translateX(-50%) translateY(0);}
 
 /* ── NAME MODAL ── */
-.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000;}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:1000;}
 .modal-box{background:#fff;border-radius:8px;padding:32px 28px;width:360px;box-shadow:0 8px 32px rgba(0,0,0,.25);text-align:center;}
 .modal-box h2{font-size:20px;margin-bottom:8px;}
 .modal-box p{font-size:13px;color:var(--grey);margin-bottom:20px;}
@@ -265,33 +265,41 @@ html,body{height:100%;overflow:hidden;font-family:'Arial',sans-serif;font-size:1
 ::-webkit-scrollbar{width:6px;height:6px;}
 ::-webkit-scrollbar-thumb{background:#c0c0c0;border-radius:3px;}
 
+/* ── SHORTCUT BAR (muncul di halaman kosong) ── */
+.shortcut-bar{
+  position:absolute;top:152px;left:50%;
+  transform:translateX(-50%);
+  display:flex;align-items:center;gap:8px;
+  pointer-events:none;opacity:1;transition:opacity .2s;
+  white-space:nowrap;
+}
+.shortcut-bar.hidden{opacity:0;pointer-events:none;}
+.sc-btn{
+  display:flex;align-items:center;gap:6px;
+  padding:5px 14px 5px 10px;border-radius:20px;
+  border:1px solid #dadce0;background:#fff;
+  font-size:13px;color:#3c4043;cursor:pointer;
+  pointer-events:all;
+  transition:background .15s,box-shadow .15s;
+  box-shadow:0 1px 2px rgba(0,0,0,.07);
+}
+.sc-btn:hover{background:#f8f9fa;box-shadow:0 1px 4px rgba(0,0,0,.12);}
+
 /* ── REMOTE CURSORS ── */
 .remote-cursor-wrap{
-  position:absolute;
-  pointer-events:none;
-  z-index:50;
+  position:absolute;pointer-events:none;z-index:50;
 }
 .remote-cursor-caret{
-  position:absolute;
-  width:2px;
-  top:0;
-  bottom:0;
+  position:absolute;width:2px;top:0;bottom:0;
   animation:rcaret 1.1s ease-in-out infinite;
 }
-@keyframes rcaret{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes rcaret{0%,100%{opacity:1}50%{opacity:.25}}
 .remote-cursor-label{
-  position:absolute;
-  top:-22px;
-  left:0;
-  padding:2px 7px;
-  border-radius:3px 3px 3px 0;
-  font-size:11px;
-  font-weight:600;
-  color:#fff;
-  white-space:nowrap;
-  line-height:18px;
+  position:absolute;top:-22px;left:0;
+  padding:2px 7px;border-radius:3px 3px 3px 0;
+  font-size:11px;font-weight:600;color:#fff;
+  white-space:nowrap;line-height:18px;
   pointer-events:none;
-  transform:translateX(0);
   box-shadow:0 1px 4px rgba(0,0,0,.2);
 }
 </style>
@@ -518,6 +526,22 @@ html,body{height:100%;overflow:hidden;font-family:'Arial',sans-serif;font-size:1
       <div id="editor" class="page-content" contenteditable="true"
            spellcheck="true"
            data-placeholder="Mulai mengetik di sini...">{!! $document->content !!}</div>
+
+      {{-- Shortcut bar (muncul saat dokumen kosong) --}}
+      <div class="shortcut-bar" id="shortcutBar">
+        <button class="sc-btn" onclick="insertTemplate('catatan')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5f6368" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          Catatan rapat
+        </button>
+        <button class="sc-btn" onclick="insertTemplate('email')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5f6368" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/></svg>
+          Draf email
+        </button>
+        <button class="sc-btn" onclick="showMoreTemplates()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5f6368" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+          Lainnya
+        </button>
+      </div>
     </div>
   </div>
 
@@ -541,7 +565,6 @@ html,body{height:100%;overflow:hidden;font-family:'Arial',sans-serif;font-size:1
 // ── CONFIG ────────────────────────────────────────────────────────
 const DOC_ID     = {{ $document->id }};
 const UPDATE_URL = '/documents/{{ $document->id }}';
-const CURSOR_URL = '/documents/{{ $document->id }}/cursor';
 const CSRF       = document.querySelector('meta[name="csrf-token"]').content;
 const REVERB_KEY  = '{{ env("REVERB_APP_KEY") }}';
 const REVERB_HOST = window.location.hostname;
@@ -560,22 +583,35 @@ const onlineUsers={};
 const typingTimers={};
 
 // ── MODAL ─────────────────────────────────────────────────────────
-const modal=document.getElementById('nameModal');
-const nameInput=document.getElementById('nameInput');
-document.getElementById('nameSubmit').onclick=()=>{if(nameInput.value.trim())startSession(nameInput.value);};
-nameInput.addEventListener('keydown',e=>{if(e.key==='Enter'&&nameInput.value.trim())startSession(nameInput.value);});
-const sn=localStorage.getItem('gdocs_name');if(sn)nameInput.value=sn;
+const modal     = document.getElementById('nameModal');
+const nameInput = document.getElementById('nameInput');
+document.getElementById('nameSubmit').onclick = () => {
+  if (nameInput.value.trim()) startSession(nameInput.value);
+};
+nameInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && nameInput.value.trim()) startSession(nameInput.value);
+});
 
-function startSession(name){
-  myName=name.trim()||'Anonim';
-  myId='u_'+Math.random().toString(36).slice(2,10);
-  myColor=nextColor();
-  localStorage.setItem('gdocs_name',myName);
-  modal.style.display='none';
-  onlineUsers[myId]={name:myName,color:myColor,isTyping:false};
+function startSession(name) {
+  myName  = name.trim() || 'Anonim';
+  myId    = localStorage.getItem('gdocs_uid') || ('u_' + Math.random().toString(36).slice(2,10));
+  myColor = localStorage.getItem('gdocs_color') || nextColor();
+  localStorage.setItem('gdocs_name',  myName);
+  localStorage.setItem('gdocs_uid',   myId);
+  localStorage.setItem('gdocs_color', myColor);
+  modal.style.display = 'none';
+  onlineUsers[myId] = {name:myName, color:myColor, isTyping:false};
   renderAll();
-  addActivity('join',myName,myColor,'bergabung ke dokumen');
+  addActivity('join', myName, myColor, 'bergabung ke dokumen');
   initEcho();
+}
+
+// Auto-start: jika nama sudah tersimpan, skip modal
+const _savedName = localStorage.getItem('gdocs_name');
+if (_savedName) {
+  startSession(_savedName);
+} else {
+  modal.style.display = 'flex';
 }
 
 // ── RENDER ────────────────────────────────────────────────────────
@@ -764,6 +800,65 @@ document.addEventListener('keydown',e=>{
   if((e.ctrlKey||e.metaKey)&&e.key==='p'){e.preventDefault();window.print();}
 });
 
+// ── SHORTCUT BAR (tampil/sembunyi saat dokumen kosong/ada isi) ────
+function updateShortcutBar() {
+  const bar = document.getElementById('shortcutBar');
+  if (!bar) return;
+  const isEmpty = document.getElementById('editor').innerText.trim() === '';
+  bar.classList.toggle('hidden', !isEmpty);
+}
+
+// Template insert
+const TEMPLATES = {
+  catatan: `<h2>📋 Catatan Rapat</h2>
+<p><strong>Tanggal:</strong> ${new Date().toLocaleDateString('id-ID',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</p>
+<p><strong>Peserta:</strong> </p>
+<p><strong>Agenda:</strong></p>
+<ul><li></li></ul>
+<p><strong>Catatan:</strong></p>
+<p><br></p>
+<p><strong>Tindak lanjut:</strong></p>
+<ul><li></li></ul>`,
+
+  email: `<p>Kepada: </p>
+<p>Perihal: </p>
+<p><br></p>
+<p>Yth. [Nama Penerima],</p>
+<p><br></p>
+<p>Dengan hormat,</p>
+<p><br></p>
+<p>[Isi pesan kamu di sini]</p>
+<p><br></p>
+<p>Terima kasih.</p>
+<p><br></p>
+<p>Salam,<br>[Nama kamu]</p>`,
+};
+
+function insertTemplate(type) {
+  const ed = document.getElementById('editor');
+  if (TEMPLATES[type]) {
+    ed.innerHTML = TEMPLATES[type];
+    updateShortcutBar();
+    ed.focus();
+    // Pindahkan kursor ke akhir
+    const range = document.createRange();
+    range.selectNodeContents(ed);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    scheduleSave();
+  }
+}
+
+function showMoreTemplates() {
+  window.location.href = '/';
+}
+
+// Update shortcut bar saat editor berubah
+document.getElementById('editor').addEventListener('input', updateShortcutBar);
+setTimeout(updateShortcutBar, 100);
+
 // ── REVERB / ECHO ─────────────────────────────────────────────────
 function initEcho(){
   const s1=document.createElement('script');
@@ -783,9 +878,7 @@ function connectReverb(){
       wsHost:REVERB_HOST,wsPort:REVERB_PORT,wssPort:REVERB_PORT,
       forceTLS:false,enabledTransports:['ws'],disableStats:true,
     });
-    const ch = window.Echo.channel(document.${DOC_ID});
-
-    ch.listen('.document.updated',data=>{
+    window.Echo.channel(`document.${DOC_ID}`).listen('.document.updated',data=>{
       if(data.editor_id===myId)return;
       if(!onlineUsers[data.editor_id]){
         onlineUsers[data.editor_id]={name:data.editor_name,color:nextColor(),isTyping:false};
@@ -802,22 +895,8 @@ function connectReverb(){
       if(data.title!==titleInput.value){titleInput.value=data.title;document.title=data.title+' - GDocs';}
       setSave('saved');
       addActivity('edit',data.editor_name,onlineUsers[data.editor_id].color,'mengedit dokumen');
+      showSnack(`✏️ ${data.editor_name} sedang mengedit...`);
     });
-
-    ch.listen('.cursor.moved',data=>{
-      if(data.editor_id===myId)return;
-      if(!onlineUsers[data.editor_id]){
-        const c=data.color||nextColor();
-        onlineUsers[data.editor_id]={name:data.editor_name,color:c,isTyping:false};
-        addActivity('join',data.editor_name,c,'bergabung ke dokumen');
-        renderAll();
-      }
-      renderRemoteCursor(data.editor_id,data.editor_name,data.color,data.offset);
-      setTyping(data.editor_id,data.is_typing);
-      clearTimeout(typingTimers[data.editor_id]);
-      typingTimers[data.editor_id]=setTimeout(()=>setTyping(data.editor_id,false),3000);
-    });
-
     showSnack('🟢 Terhubung — siap kolaborasi!');
   }catch(e){showSnack('⚠️ Mode offline — perubahan tetap tersimpan');}
 }
@@ -836,116 +915,71 @@ function restoreCaretPos(c,pos){
 }
 
 // ── REMOTE CURSORS ────────────────────────────────────────────────
-// remoteCursors: { editorId: { name, color, offset, el } }
-const remoteCursors = {};
+const remoteCursors   = {};
 const cursorHideTimers = {};
 
-/**
- * Dapatkan koordinat (x,y,h) dari offset karakter di dalam editor
- * dengan membuat Range sementara.
- */
 function getCaretCoords(editorEl, offset) {
   try {
-    let pos = 0;
+    let pos = 0, found = false;
     const range = document.createRange();
-    let found = false;
-
     function walk(node) {
       if (found) return;
       if (node.nodeType === Node.TEXT_NODE) {
-        const len = node.length;
-        if (pos + len >= offset) {
+        if (pos + node.length >= offset) {
           range.setStart(node, offset - pos);
           range.collapse(true);
           found = true;
           return;
         }
-        pos += len;
-      } else {
-        for (const child of node.childNodes) walk(child);
-      }
+        pos += node.length;
+      } else { for (const ch of node.childNodes) walk(ch); }
     }
     walk(editorEl);
-    if (!found) {
-      // Tempel di akhir
-      range.selectNodeContents(editorEl);
-      range.collapse(false);
-    }
-
+    if (!found) { range.selectNodeContents(editorEl); range.collapse(false); }
     const rect  = range.getBoundingClientRect();
     const eRect = editorEl.getBoundingClientRect();
-    return {
-      x: rect.left - eRect.left,
-      y: rect.top  - eRect.top,
-      h: rect.height || 18,
-    };
+    return { x: rect.left - eRect.left, y: rect.top - eRect.top, h: rect.height || 18 };
   } catch { return null; }
 }
 
-/**
- * Render atau update kursor remote satu user.
- */
 function renderRemoteCursor(id, name, color, offset) {
   const editorEl = document.getElementById('editor');
   const page     = document.querySelector('.page-sheet');
   if (!page) return;
 
-  // Pastikan elemen wrapper ada
   if (!remoteCursors[id]) {
     const wrap  = document.createElement('div');
     wrap.className = 'remote-cursor-wrap';
-    wrap.id = 'rcursor_' + id;
-
     const caret = document.createElement('div');
     caret.className = 'remote-cursor-caret';
     caret.style.background = color;
-    caret.style.width = '2px';
-
     const label = document.createElement('div');
     label.className = 'remote-cursor-label';
     label.style.background = color;
     label.textContent = name;
-
     wrap.appendChild(caret);
     wrap.appendChild(label);
-    page.appendChild(wrap);          // append ke .page-sheet (position:relative)
-    remoteCursors[id] = { name, color, offset, el: wrap };
+    page.appendChild(wrap);
+    remoteCursors[id] = { el: wrap };
   }
 
-  const wrap = remoteCursors[id].el;
+  const wrap   = remoteCursors[id].el;
   const coords = getCaretCoords(editorEl, offset);
   if (!coords) return;
 
-  // page-sheet padding-left = 96px, editor offsetTop dalam page
-  const eRect    = editorEl.getBoundingClientRect();
+  const eRect   = editorEl.getBoundingClientRect();
   const pageRect = page.getBoundingClientRect();
-  const x = eRect.left - pageRect.left + coords.x;
-  const y = eRect.top  - pageRect.top  + coords.y;
-
-  wrap.style.left    = x + 'px';
-  wrap.style.top     = y + 'px';
+  wrap.style.left    = (eRect.left - pageRect.left + coords.x) + 'px';
+  wrap.style.top     = (eRect.top  - pageRect.top  + coords.y) + 'px';
   wrap.style.display = 'block';
+  wrap.querySelector('.remote-cursor-caret').style.height = coords.h + 'px';
 
-  const caret = wrap.querySelector('.remote-cursor-caret');
-  caret.style.height = coords.h + 'px';
-
-  // Auto-sembunyikan label setelah 3 detik tidak aktif
   clearTimeout(cursorHideTimers[id]);
-  cursorHideTimers[id] = setTimeout(() => {
-    if (wrap) wrap.style.display = 'none';
-  }, 4000);
-}
-
-function removeRemoteCursor(id) {
-  if (remoteCursors[id]) {
-    remoteCursors[id].el.remove();
-    delete remoteCursors[id];
-  }
+  cursorHideTimers[id] = setTimeout(() => { if (wrap) wrap.style.display = 'none'; }, 4000);
 }
 
 // ── BROADCAST KURSOR LOKAL ────────────────────────────────────────
 let cursorBroadcastTimer = null;
-
 function broadcastCursor(isTyping) {
   if (!myId) return;
   const offset = saveCaretPos(document.getElementById('editor')) || 0;
@@ -954,21 +988,13 @@ function broadcastCursor(isTyping) {
     fetch(CURSOR_URL, {
       method: 'POST',
       headers: { 'Content-Type':'application/json', 'X-CSRF-TOKEN': CSRF },
-      body: JSON.stringify({
-        editor_id:   myId,
-        editor_name: myName,
-        color:       myColor,
-        offset:      offset,
-        is_typing:   isTyping,
-      }),
-    }).catch(() => {});
-  }, 80); // debounce 80ms
+      body: JSON.stringify({ editor_id:myId, editor_name:myName, color:myColor, offset, is_typing:isTyping }),
+    }).catch(()=>{});
+  }, 80);
 }
-
-// Tambahkan event listener setelah editor siap
-document.getElementById('editor').addEventListener('keyup',   () => broadcastCursor(true));
-document.getElementById('editor').addEventListener('mouseup', () => broadcastCursor(false));
-document.getElementById('editor').addEventListener('click',   () => broadcastCursor(false));
+document.getElementById('editor').addEventListener('keyup',   ()=>broadcastCursor(true));
+document.getElementById('editor').addEventListener('mouseup', ()=>broadcastCursor(false));
+document.getElementById('editor').addEventListener('click',   ()=>broadcastCursor(false));
 </script>
 </body>
 </html>
