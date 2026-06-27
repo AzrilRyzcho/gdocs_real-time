@@ -23,3 +23,6 @@ Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->
 
 // Broadcast posisi kursor
 Route::post('/documents/{document}/cursor', [DocumentController::class, 'cursor'])->name('documents.cursor');
+
+// Broadcast konten real-time TANPA save ke DB (sangat cepat)
+Route::post('/documents/{document}/broadcast', [DocumentController::class, 'broadcastOnly'])->name('documents.broadcast');

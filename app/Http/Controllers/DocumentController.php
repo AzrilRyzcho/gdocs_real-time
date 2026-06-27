@@ -89,6 +89,30 @@ class DocumentController extends Controller
     }
 
     /**
+     * Broadcast konten real-time ke semua listener TANPA menyimpan ke DB.
+     * Dipanggil setiap keystroke (~50ms debounce) untuk efek real-time.
+     */
+    public function broadcastOnly(Request $request, Document $document): JsonResponse
+    {
+        $validated = $request->validate([
+            'content'     => 'nullable|string',
+            'title'       => 'nullable|string|max:200',
+            'editor_id'   => 'required|string',
+            'editor_name' => 'required|string|max:50',
+        ]);
+
+        broadcast(new DocumentUpdated(
+            documentId:  $document->id,
+            content:     $validated['content'] ?? '',
+            title:       $validated['title'] ?? $document->title,
+            editorId:    $validated['editor_id'],
+            editorName:  $validated['editor_name'],
+        ));
+
+        return response()->json(['status' => 'ok']);
+    }
+
+    /**
      * Broadcast posisi kursor user ke semua listener.
      */
     public function cursor(Request $request, Document $document): JsonResponse

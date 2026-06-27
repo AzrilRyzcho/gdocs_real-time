@@ -562,391 +562,452 @@ html,body{height:100%;overflow:hidden;font-family:'Arial',sans-serif;font-size:1
 <div id="snackbar"></div>
 
 <script>
-// ── CONFIG ────────────────────────────────────────────────────────
-const DOC_ID     = {{ $document->id }};
-const UPDATE_URL = '/documents/{{ $document->id }}';
-const CSRF       = document.querySelector('meta[name="csrf-token"]').content;
+// ════════════════════════════════════════════════════════════════
+//  CONFIG
+// ════════════════════════════════════════════════════════════════
+const DOC_ID      = {{ $document->id }};
+const CSRF        = document.querySelector('meta[name="csrf-token"]').content;
 const REVERB_KEY  = '{{ env("REVERB_APP_KEY") }}';
 const REVERB_HOST = window.location.hostname;
 const REVERB_PORT = {{ env("REVERB_PORT", 8080) }};
+const BROADCAST_URL = '/documents/{{ $document->id }}/broadcast';
+const SAVE_URL      = '/documents/{{ $document->id }}';
+const CURSOR_URL    = '/documents/{{ $document->id }}/cursor';
 
-// ── COLORS ────────────────────────────────────────────────────────
-const COLORS=['#e74c3c','#3498db','#2ecc71','#f39c12','#9b59b6','#1abc9c','#e67e22','#e91e63'];
-let colorIdx=0;
-const nextColor=()=>COLORS[colorIdx++%COLORS.length];
-const initials=n=>n.trim().split(/\s+/).map(w=>w[0]).join('').toUpperCase().slice(0,2)||'??';
-const timeNow=()=>new Date().toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'});
+// ════════════════════════════════════════════════════════════════
+//  UTILS
+// ════════════════════════════════════════════════════════════════
+const COLORS = ['#e74c3c','#3498db','#2ecc71','#f39c12','#9b59b6','#1abc9c','#e67e22','#e91e63','#00bcd4','#ff5722'];
+let _ci = 0;
+const nextColor  = () => COLORS[_ci++ % COLORS.length];
+const initials   = n => n.trim().split(/\s+/).map(w=>w[0]).join('').toUpperCase().slice(0,2)||'??';
+const timeNow    = () => new Date().toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'});
+const snackEl    = document.getElementById('snackbar');
+let   snackTimer = null;
+function snack(msg, dur=3000) {
+  snackEl.textContent = msg;
+  snackEl.classList.add('show');
+  clearTimeout(snackTimer);
+  snackTimer = setTimeout(() => snackEl.classList.remove('show'), dur);
+}
 
-// ── STATE ─────────────────────────────────────────────────────────
-let myId=null,myName=null,myColor=null;
-const onlineUsers={};
-const typingTimers={};
+// ════════════════════════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════════════════════════
+let myId    = null;
+let myName  = null;
+let myColor = null;
+const users = {};          // { id: { name, color, isTyping } }
+const typingTimers  = {};
+const remoteCursors = {};
+const cursorTimers  = {};
 
-// ── MODAL ─────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+//  MODAL NAMA — muncul SEKALI saja, skip jika sudah ada
+// ════════════════════════════════════════════════════════════════
 const modal     = document.getElementById('nameModal');
 const nameInput = document.getElementById('nameInput');
-document.getElementById('nameSubmit').onclick = () => {
-  if (nameInput.value.trim()) startSession(nameInput.value);
-};
+
+document.getElementById('nameSubmit').addEventListener('click', () => {
+  if (nameInput.value.trim()) boot(nameInput.value.trim());
+});
 nameInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && nameInput.value.trim()) startSession(nameInput.value);
+  if (e.key === 'Enter' && nameInput.value.trim()) boot(nameInput.value.trim());
 });
 
-function startSession(name) {
-  myName  = name.trim() || 'Anonim';
-  myId    = localStorage.getItem('gdocs_uid') || ('u_' + Math.random().toString(36).slice(2,10));
+function boot(name) {
+  myName  = name;
+  myId    = localStorage.getItem('gdocs_uid')   || ('u_' + Math.random().toString(36).slice(2,10));
   myColor = localStorage.getItem('gdocs_color') || nextColor();
   localStorage.setItem('gdocs_name',  myName);
   localStorage.setItem('gdocs_uid',   myId);
   localStorage.setItem('gdocs_color', myColor);
   modal.style.display = 'none';
-  onlineUsers[myId] = {name:myName, color:myColor, isTyping:false};
+  users[myId] = { name: myName, color: myColor, isTyping: false };
   renderAll();
-  addActivity('join', myName, myColor, 'bergabung ke dokumen');
-  initEcho();
+  logActivity('join', myName, myColor, 'bergabung ke dokumen');
+  loadEcho();   // mulai koneksi WebSocket
 }
 
-// Auto-start: jika nama sudah tersimpan, skip modal
-const _savedName = localStorage.getItem('gdocs_name');
-if (_savedName) {
-  startSession(_savedName);
-} else {
-  modal.style.display = 'flex';
-}
+// Auto-boot jika nama sudah ada
+const _sn = localStorage.getItem('gdocs_name');
+if (_sn) { boot(_sn); } else { modal.style.display = 'flex'; }
 
-// ── RENDER ────────────────────────────────────────────────────────
-function renderAll(){renderToolbar();renderSidebar();updateBadge();}
+// ════════════════════════════════════════════════════════════════
+//  RENDER ONLINE USERS
+// ════════════════════════════════════════════════════════════════
+function renderAll() { renderAvatars(); renderSidebar(); renderBadge(); }
 
-function renderToolbar(){
-  const bar=document.getElementById('usersBar');
-  bar.innerHTML=Object.entries(onlineUsers).slice(0,6).map(([id,u])=>
-    `<div class="uavatar ${u.isTyping?'typing':''}" style="background:${u.color}"
-      title="${u.name}${id===myId?' (kamu)':''}${u.isTyping?' — mengetik...':''}">${initials(u.name)}</div>`
+function renderAvatars() {
+  const bar = document.getElementById('usersBar');
+  if (!bar) return;
+  bar.innerHTML = Object.entries(users).slice(0,6).map(([id,u]) =>
+    `<div class="uavatar${u.isTyping?' typing':''}" style="background:${u.color}"
+      title="${u.name}${id===myId?' (kamu)':''}${u.isTyping?' ✏ mengetik...':''}">${initials(u.name)}</div>`
   ).join('');
 }
 
-function renderSidebar(){
-  document.getElementById('userList').innerHTML=Object.entries(onlineUsers).map(([id,u])=>
-    `<div class="u-item">
+function renderSidebar() {
+  const ul = document.getElementById('userList');
+  if (!ul) return;
+  ul.innerHTML = Object.entries(users).map(([id,u]) => `
+    <div class="u-item">
       <div class="u-item-av" style="background:${u.color}">${initials(u.name)}<div class="dot"></div></div>
       <div class="u-item-info">
-        <div class="u-item-name ${id===myId?'you':''}">${u.name}</div>
-        <div class="u-item-status ${u.isTyping?'typing':''}">${u.isTyping?'✏️ Mengetik...':'● Online'}</div>
+        <div class="u-item-name${id===myId?' you':''}">${u.name}</div>
+        <div class="u-item-status${u.isTyping?' typing':''}">${u.isTyping?'✏️ Mengetik...':'● Online'}</div>
       </div>
-    </div>`
-  ).join('')||'<div style="padding:16px;color:#bdc1c6;font-size:12px">Tidak ada pengguna lain</div>';
+    </div>`).join('') || '<div style="padding:16px;color:#bdc1c6;font-size:12px">Tidak ada pengguna lain</div>';
 }
 
-function updateBadge(){
-  const n=Object.keys(onlineUsers).length;
-  document.getElementById('onlineBadge').textContent=n;
+function renderBadge() {
+  const b = document.getElementById('onlineBadge');
+  if (b) b.textContent = Object.keys(users).length;
 }
 
-function setTyping(id,v){
-  if(!onlineUsers[id])return;
-  onlineUsers[id].isTyping=v;renderAll();
+function setTyping(id, val) {
+  if (!users[id]) return;
+  users[id].isTyping = val;
+  renderAll();
 }
 
-// ── ACTIVITY ──────────────────────────────────────────────────────
-function addActivity(type,name,color,text){
-  const log=document.getElementById('activityLog');
-  const icon=type==='join'?'🟢':type==='leave'?'🔴':'✏️';
-  const d=document.createElement('div');
-  d.className=`act-item ${type}`;
-  d.innerHTML=`<span>${icon} <b style="color:${color}">${name}</b> ${text}</span><span class="act-time">${timeNow()}</span>`;
-  log.prepend(d);while(log.children.length>30)log.removeChild(log.lastChild);
+function logActivity(type, name, color, text) {
+  const log = document.getElementById('activityLog');
+  if (!log) return;
+  const d = document.createElement('div');
+  d.className = `act-item ${type}`;
+  d.innerHTML = `<span>${type==='join'?'🟢':type==='leave'?'🔴':'✏️'} <b style="color:${color}">${name}</b> ${text}</span>
+                 <span class="act-time">${timeNow()}</span>`;
+  log.prepend(d);
+  while (log.children.length > 30) log.removeChild(log.lastChild);
+}
+</script>
+<script>
+// ════════════════════════════════════════════════════════════════
+//  EDITOR — SAVE + BROADCAST REAL-TIME
+// ════════════════════════════════════════════════════════════════
+const editor     = document.getElementById('editor');
+const titleInput = document.getElementById('titleInput');
+let saveTimer    = null;
+let bcastTimer   = null;
+let isRemote     = false;   // flag: update datang dari luar, jangan re-broadcast
+
+// ── Status simpan ──
+function setSave(s) {
+  const el = document.getElementById('saveText');
+  if (!el) return;
+  el.textContent = s === 'saving' ? 'Menyimpan...'
+                 : s === 'error'  ? 'Gagal menyimpan'
+                 : 'Tersimpan di Drive';
 }
 
-// ── EDITOR ────────────────────────────────────────────────────────
-const editor=document.getElementById('editor');
-const titleInput=document.getElementById('titleInput');
-let saveTimer=null,typingTimer=null,isRemoteEdit=false;
-
-function setSave(s){
-  const dot=document.getElementById('saveIndicator');
-  const txt=document.getElementById('saveText');
-  txt.textContent=s==='saving'?'Menyimpan...':s==='error'?'Gagal menyimpan':'Tersimpan di Drive';
+// ── Simpan ke DB (jarang, setiap 3 detik setelah berhenti) ──
+async function saveDoc() {
+  if (!myId) return;
+  setSave('saving');
+  try {
+    const r = await fetch(SAVE_URL, {
+      method:  'PATCH',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': CSRF },
+      body:    JSON.stringify({ content: editor.innerHTML, title: titleInput.value, editor_id: myId, editor_name: myName }),
+    });
+    setSave(r.ok ? 'saved' : 'error');
+  } catch { setSave('error'); }
 }
 
-async function saveDoc(){
-  if(!myId)return;setSave('saving');
-  try{
-    const r=await fetch(UPDATE_URL,{method:'PATCH',
-      headers:{'Content-Type':'application/json','X-CSRF-TOKEN':CSRF},
-      body:JSON.stringify({content:editor.innerHTML,title:titleInput.value,editor_id:myId,editor_name:myName})});
-    if(!r.ok)throw 0;setSave('saved');
-  }catch{setSave('error');}
+// ── Broadcast ke device lain (SANGAT CEPAT — setiap 80ms) ──
+function broadcastNow() {
+  if (!myId) return;
+  clearTimeout(bcastTimer);
+  bcastTimer = setTimeout(() => {
+    fetch(BROADCAST_URL, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': CSRF },
+      body:    JSON.stringify({ content: editor.innerHTML, title: titleInput.value, editor_id: myId, editor_name: myName }),
+    }).catch(() => {});
+  }, 80);   // ← 80ms: terasa real-time, tidak spam server
 }
 
-function scheduleSave(){clearTimeout(saveTimer);saveTimer=setTimeout(saveDoc,1200);}
-
-editor.addEventListener('input',()=>{
-  if(isRemoteEdit)return;scheduleSave();
-  setTyping(myId,true);clearTimeout(typingTimer);
-  typingTimer=setTimeout(()=>setTyping(myId,false),2000);
+// ── Setiap ketikan: broadcast cepat + jadwalkan save ──
+editor.addEventListener('input', () => {
+  if (isRemote) return;
+  broadcastNow();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveDoc, 3000);
+  // Typing indicator
+  setTyping(myId, true);
+  clearTimeout(typingTimers[myId]);
+  typingTimers[myId] = setTimeout(() => setTyping(myId, false), 2000);
+  updateShortcutBar();
 });
-titleInput.addEventListener('input',scheduleSave);
 
-// ── FORMAT COMMANDS ───────────────────────────────────────────────
-document.querySelectorAll('.tb-btn[data-cmd]').forEach(b=>{
-  b.addEventListener('click',()=>{document.execCommand(b.dataset.cmd,false,null);editor.focus();updateFmtState();});
+titleInput.addEventListener('input', () => {
+  if (isRemote) return;
+  broadcastNow();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveDoc, 3000);
 });
 
-// Paragraph style
-document.getElementById('blockSelect').addEventListener('change',e=>{
-  document.execCommand('formatBlock',false,'<'+e.target.value+'>');editor.focus();
+// Ctrl+S = save manual
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+    e.preventDefault();
+    clearTimeout(saveTimer);
+    saveDoc();
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'p') { e.preventDefault(); window.print(); }
 });
 
-// Font
-document.getElementById('fontSelect').addEventListener('change',e=>{
-  document.execCommand('fontName',false,e.target.value);editor.focus();
-});
+// ════════════════════════════════════════════════════════════════
+//  TERIMA PERUBAHAN DARI DEVICE LAIN
+// ════════════════════════════════════════════════════════════════
+function applyRemoteChange(data) {
+  if (data.editor_id === myId) return;   // abaikan perubahan sendiri
 
-// Font size
-const fsInput=document.getElementById('fontSize');
-fsInput.addEventListener('change',()=>applyFontSize(parseInt(fsInput.value)||11));
-document.getElementById('btnFsDown').onclick=()=>applyFontSize(Math.max(6,parseInt(fsInput.value)-1));
-document.getElementById('btnFsUp').onclick=()=>applyFontSize(Math.min(400,parseInt(fsInput.value)+1));
-function applyFontSize(pt){
-  fsInput.value=pt;
-  document.execCommand('fontSize',false,'7');
-  document.querySelectorAll('font[size="7"]').forEach(el=>{el.removeAttribute('size');el.style.fontSize=pt+'pt';});
-  editor.focus();
+  // Daftarkan user baru jika belum ada
+  if (!users[data.editor_id]) {
+    const c = data.color || nextColor();
+    users[data.editor_id] = { name: data.editor_name, color: c, isTyping: false };
+    logActivity('join', data.editor_name, c, 'bergabung dan mengedit');
+    renderAll();
+  }
+
+  // ── Update konten TANPA menghapus posisi kursor sendiri ──
+  const before = saveCaretPos(editor);   // simpan posisi kursor kita
+
+  isRemote = true;                       // jangan re-broadcast
+  editor.innerHTML = data.content;       // terapkan perubahan
+  isRemote = false;
+
+  restoreCaretPos(editor, before);       // kembalikan kursor kita
+
+  // Update judul
+  if (data.title && data.title !== titleInput.value) {
+    titleInput.value  = data.title;
+    document.title    = data.title + ' - GDocs';
+  }
+
+  setSave('saved');
+  updateShortcutBar();
+
+  // Typing indicator user lain
+  setTyping(data.editor_id, true);
+  clearTimeout(typingTimers[data.editor_id]);
+  typingTimers[data.editor_id] = setTimeout(() => setTyping(data.editor_id, false), 2500);
 }
+
+// ════════════════════════════════════════════════════════════════
+//  FORMAT TOOLBAR
+// ════════════════════════════════════════════════════════════════
+document.querySelectorAll('.tb-btn[data-cmd]').forEach(b => {
+  b.addEventListener('click', () => {
+    document.execCommand(b.dataset.cmd, false, null);
+    editor.focus();
+    updateFmtState();
+    broadcastNow();
+  });
+});
+
+document.getElementById('blockSelect')?.addEventListener('change', e => {
+  document.execCommand('formatBlock', false, '<' + e.target.value + '>');
+  editor.focus(); broadcastNow();
+});
+
+document.getElementById('fontSelect')?.addEventListener('change', e => {
+  document.execCommand('fontName', false, e.target.value);
+  editor.focus(); broadcastNow();
+});
+
+const fsInput = document.getElementById('fontSize');
+function applyFontSize(pt) {
+  if (fsInput) fsInput.value = pt;
+  document.execCommand('fontSize', false, '7');
+  document.querySelectorAll('font[size="7"]').forEach(el => {
+    el.removeAttribute('size'); el.style.fontSize = pt + 'pt';
+  });
+  editor.focus(); broadcastNow();
+}
+document.getElementById('btnFsDown')?.addEventListener('click', () => applyFontSize(Math.max(6, parseInt(fsInput?.value||11)-1)));
+document.getElementById('btnFsUp')?.addEventListener('click',   () => applyFontSize(Math.min(400, parseInt(fsInput?.value||11)+1)));
+fsInput?.addEventListener('change', () => applyFontSize(parseInt(fsInput.value)||11));
 
 // Color
-const textColorPicker=document.getElementById('textColorPicker');
-const highlightPicker=document.getElementById('highlightPicker');
-document.getElementById('btnTextColor').onclick=()=>textColorPicker.click();
-textColorPicker.oninput=e=>{document.execCommand('foreColor',false,e.target.value);document.getElementById('textColorBar').style.background=e.target.value;};
-document.getElementById('btnHighlight').onclick=()=>highlightPicker.click();
-highlightPicker.oninput=e=>{document.execCommand('backColor',false,e.target.value);document.getElementById('highlightBar').style.background=e.target.value;};
+const tcp = document.getElementById('textColorPicker');
+const hcp = document.getElementById('highlightPicker');
+document.getElementById('btnTextColor')?.addEventListener('click', () => tcp?.click());
+tcp?.addEventListener('input', e => {
+  document.execCommand('foreColor', false, e.target.value);
+  document.getElementById('textColorBar').style.background = e.target.value;
+  broadcastNow();
+});
+document.getElementById('btnHighlight')?.addEventListener('click', () => hcp?.click());
+hcp?.addEventListener('input', e => {
+  document.execCommand('backColor', false, e.target.value);
+  document.getElementById('highlightBar').style.background = e.target.value;
+  broadcastNow();
+});
 
 // Zoom
-document.getElementById('zoomSelect').onchange=e=>{
-  document.querySelectorAll('.page-sheet').forEach(p=>p.style.transform=`scale(${parseInt(e.target.value)/100})`);
-};
-
-function updateFmtState(){
-  ['bold','italic','underline','strikeThrough'].forEach(c=>{
-    const b=document.querySelector(`.tb-btn[data-cmd="${c}"]`);
-    if(b)b.classList.toggle('active',document.queryCommandState(c));
-  });
-}
-editor.addEventListener('keyup',updateFmtState);
-editor.addEventListener('mouseup',updateFmtState);
-
-// ── RULER ─────────────────────────────────────────────────────────
-function drawRuler(){
-  const track=document.getElementById('ruler-track');
-  const canvas=document.getElementById('ruler-canvas');
-  const W=track.offsetWidth; canvas.width=W; canvas.height=24;
-  const ctx=canvas.getContext('2d');
-  ctx.clearRect(0,0,W,24);
-  ctx.fillStyle='#f8f9fa'; ctx.fillRect(0,0,W,24);
-  ctx.strokeStyle='#9aa0a6'; ctx.lineWidth=1;
-  ctx.font='9px Arial'; ctx.fillStyle='#9aa0a6'; ctx.textAlign='center';
-  // 816px page width, 96px left margin — show cm marks
-  const pxPerCm=37.8;
-  for(let i=0;i<=W/pxPerCm;i++){
-    const x=Math.round(i*pxPerCm)+.5;
-    if(x>W)break;
-    const major=(i%2===0);
-    ctx.beginPath(); ctx.moveTo(x,major?10:15); ctx.lineTo(x,24); ctx.stroke();
-    if(major&&i>0) ctx.fillText(i,x,9);
-  }
-}
-window.addEventListener('resize',drawRuler);
-setTimeout(drawRuler,100);
-
-// ── PAGE NUMBERS ──────────────────────────────────────────────────
-function updatePageNumbers(){
-  const ruler=document.getElementById('page-ruler');
-  ruler.innerHTML='';
-  const sheets=document.querySelectorAll('.page-sheet');
-  sheets.forEach((s,i)=>{
-    const top=s.offsetTop+s.offsetHeight/2;
-    const el=document.createElement('div');
-    el.className='page-num'; el.style.top=(top)+'px'; el.textContent=i+1;
-    ruler.appendChild(el);
-  });
-}
-setTimeout(updatePageNumbers,200);
-
-// ── MENU ──────────────────────────────────────────────────────────
-function toggleMenu(el){
-  document.querySelectorAll('.menu-item').forEach(m=>{
-    if(m!==el){m.classList.remove('open');m.querySelector('.dropdown').classList.remove('show');}
-  });
-  const dd=el.querySelector('.dropdown');
-  el.classList.toggle('open');dd.classList.toggle('show');
-}
-document.addEventListener('click',e=>{
-  if(!e.target.closest('.menu-item')){
-    document.querySelectorAll('.menu-item').forEach(m=>{m.classList.remove('open');m.querySelector('.dropdown').classList.remove('show');});
-  }
+document.getElementById('zoomSelect')?.addEventListener('change', e => {
+  const s = parseInt(e.target.value) / 100;
+  document.querySelectorAll('.page-sheet').forEach(p => p.style.transform = `scale(${s})`);
 });
 
-// ── SNACKBAR ──────────────────────────────────────────────────────
-function showSnack(msg){
-  const el=document.getElementById('snackbar');
-  el.textContent=msg;el.classList.add('show');
-  setTimeout(()=>el.classList.remove('show'),3000);
+function updateFmtState() {
+  ['bold','italic','underline','strikeThrough'].forEach(c => {
+    const b = document.querySelector(`.tb-btn[data-cmd="${c}"]`);
+    if (b) b.classList.toggle('active', document.queryCommandState(c));
+  });
 }
-
-// ── KEYBOARD SHORTCUTS ────────────────────────────────────────────
-document.addEventListener('keydown',e=>{
-  if((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();clearTimeout(saveTimer);saveDoc();}
-  if((e.ctrlKey||e.metaKey)&&e.key==='p'){e.preventDefault();window.print();}
-});
-
-// ── SHORTCUT BAR (tampil/sembunyi saat dokumen kosong/ada isi) ────
+editor.addEventListener('keyup',   updateFmtState);
+editor.addEventListener('mouseup', updateFmtState);
+</script>
+<script>
+// ════════════════════════════════════════════════════════════════
+//  SHORTCUT BAR
+// ════════════════════════════════════════════════════════════════
 function updateShortcutBar() {
   const bar = document.getElementById('shortcutBar');
-  if (!bar) return;
-  const isEmpty = document.getElementById('editor').innerText.trim() === '';
-  bar.classList.toggle('hidden', !isEmpty);
+  if (bar) bar.classList.toggle('hidden', editor.innerText.trim() !== '');
 }
+setTimeout(updateShortcutBar, 100);
 
-// Template insert
 const TEMPLATES = {
   catatan: `<h2>📋 Catatan Rapat</h2>
 <p><strong>Tanggal:</strong> ${new Date().toLocaleDateString('id-ID',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</p>
 <p><strong>Peserta:</strong> </p>
-<p><strong>Agenda:</strong></p>
-<ul><li></li></ul>
-<p><strong>Catatan:</strong></p>
-<p><br></p>
-<p><strong>Tindak lanjut:</strong></p>
-<ul><li></li></ul>`,
-
-  email: `<p>Kepada: </p>
-<p>Perihal: </p>
-<p><br></p>
-<p>Yth. [Nama Penerima],</p>
-<p><br></p>
-<p>Dengan hormat,</p>
-<p><br></p>
-<p>[Isi pesan kamu di sini]</p>
-<p><br></p>
-<p>Terima kasih.</p>
-<p><br></p>
-<p>Salam,<br>[Nama kamu]</p>`,
+<p><strong>Agenda:</strong></p><ul><li></li></ul>
+<p><strong>Catatan:</strong></p><p><br></p>
+<p><strong>Tindak lanjut:</strong></p><ul><li></li></ul>`,
+  email: `<p>Kepada: </p><p>Perihal: </p><p><br></p>
+<p>Yth. [Nama Penerima],</p><p><br></p>
+<p>Dengan hormat,</p><p><br></p>
+<p>[Isi pesan]</p><p><br></p>
+<p>Terima kasih.</p><p><br></p><p>Salam,<br>[Nama kamu]</p>`,
 };
-
 function insertTemplate(type) {
-  const ed = document.getElementById('editor');
-  if (TEMPLATES[type]) {
-    ed.innerHTML = TEMPLATES[type];
-    updateShortcutBar();
-    ed.focus();
-    // Pindahkan kursor ke akhir
-    const range = document.createRange();
-    range.selectNodeContents(ed);
-    range.collapse(false);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-    scheduleSave();
+  if (!TEMPLATES[type]) return;
+  editor.innerHTML = TEMPLATES[type];
+  updateShortcutBar();
+  editor.focus();
+  broadcastNow();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveDoc, 2000);
+}
+function showMoreTemplates() { window.location.href = '/'; }
+
+// ════════════════════════════════════════════════════════════════
+//  RULER
+// ════════════════════════════════════════════════════════════════
+function drawRuler() {
+  const track  = document.getElementById('ruler-track');
+  const canvas = document.getElementById('ruler-canvas');
+  if (!track || !canvas) return;
+  const W = track.offsetWidth;
+  canvas.width = W; canvas.height = 24;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0,0,W,24);
+  ctx.fillStyle = '#f8f9fa'; ctx.fillRect(0,0,W,24);
+  ctx.strokeStyle = '#9aa0a6'; ctx.lineWidth = 1;
+  ctx.font = '9px Arial'; ctx.fillStyle = '#9aa0a6'; ctx.textAlign = 'center';
+  const pxPerCm = 37.8;
+  for (let i = 0; i * pxPerCm <= W; i++) {
+    const x = Math.round(i * pxPerCm) + .5;
+    ctx.beginPath(); ctx.moveTo(x, i%2===0?10:15); ctx.lineTo(x,24); ctx.stroke();
+    if (i%2===0 && i>0) ctx.fillText(i, x, 9);
   }
 }
+window.addEventListener('resize', drawRuler);
+setTimeout(drawRuler, 200);
 
-function showMoreTemplates() {
-  window.location.href = '/';
+// ════════════════════════════════════════════════════════════════
+//  MENU DROPDOWN
+// ════════════════════════════════════════════════════════════════
+function toggleMenu(el) {
+  const isOpen = el.classList.contains('open');
+  document.querySelectorAll('.menu-item.open').forEach(m => {
+    m.classList.remove('open');
+    m.querySelector('.dropdown')?.classList.remove('show');
+  });
+  if (!isOpen) {
+    el.classList.add('open');
+    el.querySelector('.dropdown')?.classList.add('show');
+  }
 }
-
-// Update shortcut bar saat editor berubah
-document.getElementById('editor').addEventListener('input', updateShortcutBar);
-setTimeout(updateShortcutBar, 100);
-
-// ── REVERB / ECHO ─────────────────────────────────────────────────
-function initEcho(){
-  const s1=document.createElement('script');
-  s1.src='https://cdnjs.cloudflare.com/ajax/libs/laravel-echo/1.15.3/echo.iife.js';
-  s1.onload=()=>{
-    const s2=document.createElement('script');
-    s2.src='https://cdnjs.cloudflare.com/ajax/libs/pusher/8.4.0-rc2/pusher.min.js';
-    s2.onload=connectReverb; document.head.appendChild(s2);
-  };
-  document.head.appendChild(s1);
-}
-
-function connectReverb(){
-  try{
-    window.Echo=new window.LaravelEcho({
-      broadcaster:'reverb',key:REVERB_KEY,
-      wsHost:REVERB_HOST,wsPort:REVERB_PORT,wssPort:REVERB_PORT,
-      forceTLS:false,enabledTransports:['ws'],disableStats:true,
+document.addEventListener('click', e => {
+  if (!e.target.closest('.menu-item')) {
+    document.querySelectorAll('.menu-item.open').forEach(m => {
+      m.classList.remove('open');
+      m.querySelector('.dropdown')?.classList.remove('show');
     });
-    window.Echo.channel(`document.${DOC_ID}`).listen('.document.updated',data=>{
-      if(data.editor_id===myId)return;
-      if(!onlineUsers[data.editor_id]){
-        onlineUsers[data.editor_id]={name:data.editor_name,color:nextColor(),isTyping:false};
-        addActivity('join',data.editor_name,onlineUsers[data.editor_id].color,'bergabung dan mengedit');
-      }
-      setTyping(data.editor_id,true);
-      clearTimeout(typingTimers[data.editor_id]);
-      typingTimers[data.editor_id]=setTimeout(()=>setTyping(data.editor_id,false),3000);
-      isRemoteEdit=true;
-      const pos=saveCaretPos(editor);
-      editor.innerHTML=data.content;
-      restoreCaretPos(editor,pos);
-      isRemoteEdit=false;
-      if(data.title!==titleInput.value){titleInput.value=data.title;document.title=data.title+' - GDocs';}
-      setSave('saved');
-      addActivity('edit',data.editor_name,onlineUsers[data.editor_id].color,'mengedit dokumen');
-      showSnack(`✏️ ${data.editor_name} sedang mengedit...`);
-    });
-    showSnack('🟢 Terhubung — siap kolaborasi!');
-  }catch(e){showSnack('⚠️ Mode offline — perubahan tetap tersimpan');}
-}
+  }
+});
 
-// ── CARET ─────────────────────────────────────────────────────────
-function saveCaretPos(c){
-  const s=window.getSelection();if(!s.rangeCount)return null;
-  const r=s.getRangeAt(0).cloneRange();r.selectNodeContents(c);r.setEnd(s.getRangeAt(0).endContainer,s.getRangeAt(0).endOffset);return r.toString().length;
+// ════════════════════════════════════════════════════════════════
+//  CARET SAVE / RESTORE  (posisi kursor tidak loncat saat remote edit)
+// ════════════════════════════════════════════════════════════════
+function saveCaretPos(ctx) {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount) return 0;
+  const r = sel.getRangeAt(0).cloneRange();
+  r.selectNodeContents(ctx);
+  r.setEnd(sel.getRangeAt(0).endContainer, sel.getRangeAt(0).endOffset);
+  return r.toString().length;
 }
-function restoreCaretPos(c,pos){
-  if(pos===null)return;try{
-    const r=document.createRange(),s=window.getSelection();let p=0;
-    function w(n){if(n.nodeType===3){if(p+n.length>=pos){r.setStart(n,pos-p);r.collapse(true);s.removeAllRanges();s.addRange(r);throw 0;}p+=n.length;}else for(const ch of n.childNodes)w(ch);}
-    try{w(c);}catch(e){if(e!==0)console.error(e);}
-  }catch{}
-}
-
-// ── REMOTE CURSORS ────────────────────────────────────────────────
-const remoteCursors   = {};
-const cursorHideTimers = {};
-
-function getCaretCoords(editorEl, offset) {
+function restoreCaretPos(ctx, pos) {
+  if (!pos && pos !== 0) return;
   try {
-    let pos = 0, found = false;
     const range = document.createRange();
+    const sel   = window.getSelection();
+    let   p     = 0;
+    let   done  = false;
     function walk(node) {
-      if (found) return;
+      if (done) return;
       if (node.nodeType === Node.TEXT_NODE) {
-        if (pos + node.length >= offset) {
-          range.setStart(node, offset - pos);
+        if (p + node.length >= pos) {
+          range.setStart(node, pos - p);
           range.collapse(true);
-          found = true;
+          sel.removeAllRanges();
+          sel.addRange(range);
+          done = true;
           return;
         }
-        pos += node.length;
-      } else { for (const ch of node.childNodes) walk(ch); }
+        p += node.length;
+      } else {
+        for (const ch of node.childNodes) walk(ch);
+      }
+    }
+    walk(ctx);
+    if (!done) { range.selectNodeContents(ctx); range.collapse(false); sel.removeAllRanges(); sel.addRange(range); }
+  } catch (_) {}
+}
+
+// ════════════════════════════════════════════════════════════════
+//  REMOTE CURSOR (garis berwarna + nama)
+// ════════════════════════════════════════════════════════════════
+function getCoords(editorEl, offset) {
+  try {
+    let pos = 0; let found = false;
+    const r = document.createRange();
+    function walk(n) {
+      if (found) return;
+      if (n.nodeType === 3) {
+        if (pos + n.length >= offset) { r.setStart(n, offset - pos); r.collapse(true); found = true; return; }
+        pos += n.length;
+      } else for (const c of n.childNodes) walk(c);
     }
     walk(editorEl);
-    if (!found) { range.selectNodeContents(editorEl); range.collapse(false); }
-    const rect  = range.getBoundingClientRect();
+    if (!found) { r.selectNodeContents(editorEl); r.collapse(false); }
+    const rect  = r.getBoundingClientRect();
     const eRect = editorEl.getBoundingClientRect();
     return { x: rect.left - eRect.left, y: rect.top - eRect.top, h: rect.height || 18 };
   } catch { return null; }
 }
 
-function renderRemoteCursor(id, name, color, offset) {
-  const editorEl = document.getElementById('editor');
-  const page     = document.querySelector('.page-sheet');
-  if (!page) return;
-
+function renderCursor(id, name, color, offset) {
+  const edEl = document.getElementById('editor');
+  const page = document.querySelector('.page-sheet');
+  if (!page || !edEl) return;
   if (!remoteCursors[id]) {
     const wrap  = document.createElement('div');
     wrap.className = 'remote-cursor-wrap';
@@ -962,39 +1023,95 @@ function renderRemoteCursor(id, name, color, offset) {
     page.appendChild(wrap);
     remoteCursors[id] = { el: wrap };
   }
-
   const wrap   = remoteCursors[id].el;
-  const coords = getCaretCoords(editorEl, offset);
+  const coords = getCoords(edEl, offset);
   if (!coords) return;
-
-  const eRect   = editorEl.getBoundingClientRect();
-  const pageRect = page.getBoundingClientRect();
-  wrap.style.left    = (eRect.left - pageRect.left + coords.x) + 'px';
-  wrap.style.top     = (eRect.top  - pageRect.top  + coords.y) + 'px';
-  wrap.style.display = 'block';
+  const er = edEl.getBoundingClientRect();
+  const pr = page.getBoundingClientRect();
+  wrap.style.cssText = `left:${er.left-pr.left+coords.x}px;top:${er.top-pr.top+coords.y}px;display:block;position:absolute;pointer-events:none;z-index:50;`;
   wrap.querySelector('.remote-cursor-caret').style.height = coords.h + 'px';
-
-  clearTimeout(cursorHideTimers[id]);
-  cursorHideTimers[id] = setTimeout(() => { if (wrap) wrap.style.display = 'none'; }, 4000);
+  clearTimeout(cursorTimers[id]);
+  cursorTimers[id] = setTimeout(() => { if(wrap) wrap.style.display='none'; }, 4000);
 }
 
-// ── BROADCAST KURSOR LOKAL ────────────────────────────────────────
-let cursorBroadcastTimer = null;
-function broadcastCursor(isTyping) {
+// Broadcast kursor lokal
+let cursorBTimer = null;
+function broadcastCursor(typing) {
   if (!myId) return;
-  const offset = saveCaretPos(document.getElementById('editor')) || 0;
-  clearTimeout(cursorBroadcastTimer);
-  cursorBroadcastTimer = setTimeout(() => {
+  const offset = saveCaretPos(editor) || 0;
+  clearTimeout(cursorBTimer);
+  cursorBTimer = setTimeout(() => {
     fetch(CURSOR_URL, {
       method: 'POST',
-      headers: { 'Content-Type':'application/json', 'X-CSRF-TOKEN': CSRF },
-      body: JSON.stringify({ editor_id:myId, editor_name:myName, color:myColor, offset, is_typing:isTyping }),
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': CSRF },
+      body: JSON.stringify({ editor_id: myId, editor_name: myName, color: myColor, offset, is_typing: typing }),
     }).catch(()=>{});
   }, 80);
 }
-document.getElementById('editor').addEventListener('keyup',   ()=>broadcastCursor(true));
-document.getElementById('editor').addEventListener('mouseup', ()=>broadcastCursor(false));
-document.getElementById('editor').addEventListener('click',   ()=>broadcastCursor(false));
+editor.addEventListener('keyup',   () => broadcastCursor(true));
+editor.addEventListener('mouseup', () => broadcastCursor(false));
+editor.addEventListener('click',   () => broadcastCursor(false));
+
+// ════════════════════════════════════════════════════════════════
+//  LARAVEL ECHO + REVERB  (WebSocket real-time)
+// ════════════════════════════════════════════════════════════════
+function loadEcho() {
+  // Load Echo & Pusher dari CDN
+  const s1 = document.createElement('script');
+  s1.src = 'https://cdnjs.cloudflare.com/ajax/libs/laravel-echo/1.15.3/echo.iife.js';
+  s1.onload = () => {
+    const s2 = document.createElement('script');
+    s2.src = 'https://cdnjs.cloudflare.com/ajax/libs/pusher/8.4.0-rc2/pusher.min.js';
+    s2.onload = connectReverb;
+    s2.onerror = () => snack('⚠️ CDN gagal, coba refresh');
+    document.head.appendChild(s2);
+  };
+  s1.onerror = () => snack('⚠️ CDN gagal, coba refresh');
+  document.head.appendChild(s1);
+}
+
+function connectReverb() {
+  try {
+    window.Echo = new window.LaravelEcho({
+      broadcaster:       'reverb',
+      key:               REVERB_KEY,
+      wsHost:            REVERB_HOST,
+      wsPort:            REVERB_PORT,
+      wssPort:           REVERB_PORT,
+      forceTLS:          false,
+      enabledTransports: ['ws'],
+      disableStats:      true,
+    });
+
+    const ch = window.Echo.channel(`document.${DOC_ID}`);
+
+    // ── Terima perubahan konten dari device lain ──────────────
+    ch.listen('.document.updated', data => {
+      applyRemoteChange(data);
+    });
+
+    // ── Terima posisi kursor dari device lain ─────────────────
+    ch.listen('.cursor.moved', data => {
+      if (data.editor_id === myId) return;
+      if (!users[data.editor_id]) {
+        const c = data.color || nextColor();
+        users[data.editor_id] = { name: data.editor_name, color: c, isTyping: false };
+        logActivity('join', data.editor_name, c, 'bergabung ke dokumen');
+        renderAll();
+      }
+      renderCursor(data.editor_id, data.editor_name, data.color, data.offset);
+      setTyping(data.editor_id, data.is_typing);
+      clearTimeout(typingTimers[data.editor_id]);
+      typingTimers[data.editor_id] = setTimeout(() => setTyping(data.editor_id, false), 3000);
+    });
+
+    snack('🟢 Terhubung — perubahan akan muncul real-time!');
+
+  } catch (err) {
+    console.warn('Reverb error:', err);
+    snack('⚠️ WebSocket gagal — mode offline aktif');
+  }
+}
 </script>
 </body>
 </html>
