@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="id">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Dokumen</title>
+<title>ZenDocs — Real-time Productivity</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;}
 :root{
@@ -137,11 +137,11 @@ nav{
       <rect x="13" y="27" width="22" height="2" rx="1" fill="#fff"/>
       <rect x="13" y="32" width="16" height="2" rx="1" fill="#fff"/>
     </svg>
-    <span class="nav-logo-text">Dokumen</span>
+    <span class="nav-logo-text">ZenDocs</span>
   </a>
   <div class="nav-search">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#5f6368" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
-    <input type="text" placeholder="Telusuri" id="searchInput">
+    <input type="text" placeholder="Cari dokumen..." id="searchInput">
   </div>
   <div class="nav-right">
     <button class="nav-icon-btn" title="Aplikasi Google">
@@ -155,7 +155,7 @@ nav{
 <div class="template-section">
   <div class="template-inner">
     <div class="section-header">
-      <span class="section-title">Mulai dokumen baru</span>
+      <span class="section-title">Buat dokumen baru</span>
       <div class="tg-right">
         <button class="tg-btn">
           Galeri template
