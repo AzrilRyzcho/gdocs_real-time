@@ -376,13 +376,6 @@ html,body{height:100%;overflow:hidden;font-family:var(--font);color:var(--ink);b
     </div>
     <div id="shareMsg" style="font-size:13px;margin-bottom:12px;display:none;padding:8px 12px;border-radius:6px;"></div>
     <div style="border-top:1px solid var(--border);padding-top:12px;">
-      <div style="font-size:12px;font-weight:600;color:var(--ink-3);margin-bottom:8px">Link bagikan:</div>
-      <div style="display:flex;gap:6px;">
-        <input type="text" id="shareLinkInput" readonly style="flex:1;height:36px;border:1.5px solid var(--border);border-radius:var(--r-sm);padding:0 10px;font-size:12px;color:var(--ink-3);background:var(--bg);outline:none;font-family:monospace;">
-        <button onclick="copyShareLink()" style="height:36px;padding:0 14px;border:1.5px solid var(--border);border-radius:var(--r-sm);font-size:12px;background:none;cursor:pointer;font-family:var(--font);color:var(--ink-2);">Salin</button>
-      </div>
-    </div>
-    <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;">
       <div style="font-size:12px;font-weight:600;color:var(--ink-3);margin-bottom:8px">Orang yang punya akses:</div>
       <div id="shareList" style="max-height:150px;overflow-y:auto;"></div>
     </div>
