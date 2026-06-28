@@ -22,14 +22,15 @@ class DocumentController extends Controller
         // Dokumen milik sendiri
         $ownDocs = auth()->user()->documents()
             ->where('is_archived', false)
-            ->latest()
-            ->get(['id', 'title', 'content', 'share_token', 'is_favorite', 'is_archived', 'updated_at', 'last_editor_name', 'last_editor_color', 'last_edited_at']);
+            ->latest('documents.updated_at')
+            ->get(['documents.id', 'documents.title', 'documents.content', 'documents.share_token', 'documents.is_favorite', 'documents.is_archived', 'documents.updated_at', 'documents.last_editor_name', 'documents.last_editor_color', 'documents.last_edited_at']);
 
         // Dokumen yang di-share ke user ini
-        $sharedDocs = auth()->user()->sharedDocuments()
+        $sharedIds = \App\Models\DocumentShare::where('user_id', auth()->id())->pluck('document_id');
+        $sharedDocs = \App\Models\Document::whereIn('id', $sharedIds)
             ->where('is_archived', false)
-            ->latest()
-            ->get(['documents.id', 'title', 'content', 'share_token', 'is_favorite', 'is_archived', 'updated_at', 'last_editor_name', 'last_editor_color', 'last_edited_at']);
+            ->latest('updated_at')
+            ->get(['id', 'title', 'content', 'share_token', 'is_favorite', 'is_archived', 'updated_at', 'last_editor_name', 'last_editor_color', 'last_edited_at']);
 
         // Gabungkan, sort by updated_at desc
         $documents = $ownDocs->merge($sharedDocs)->sortByDesc('updated_at')->take(50)->values();
