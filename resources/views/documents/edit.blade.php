@@ -520,10 +520,22 @@ async function saveDoc(){
 }
 
 function broadcastNow(){
-  if(!myId)return; clearTimeout(bcTmr);
+  if(!myId)return;
+  // WHISPER: kirim langsung ke peer via WebSocket — 0 delay, tanpa server
+  if(window._wsChannel){
+    window._wsChannel.whisper('typing',{
+      content:editor.innerHTML,
+      title:docTitle.value,
+      editor_id:myId,
+      editor_name:myName,
+      color:myColor
+    });
+  }
+  // Tetap broadcast via server sebagai backup (untuk save ke DB)
+  clearTimeout(bcTmr);
   bcTmr=setTimeout(()=>fetch(U_BC,{method:'POST',credentials:'include',
     headers:{'Content-Type':'application/json','X-CSRF-TOKEN':CSRF},
-    body:JSON.stringify({content:editor.innerHTML,title:docTitle.value,editor_id:myId,editor_name:myName,color:myColor})}).catch(()=>{}),30);
+    body:JSON.stringify({content:editor.innerHTML,title:docTitle.value,editor_id:myId,editor_name:myName,color:myColor})}).catch(()=>{}),200);
 }
 
 editor.addEventListener('input',()=>{
@@ -646,9 +658,14 @@ function renderCursor(id,name,color,offset){
 let cbTmr=null;
 function broadcastCursor(t){
   if(!myId)return;const o=saveCaret($('editor'))||0;
+  // Whisper cursor langsung ke peer
+  if(window._wsChannel){
+    window._wsChannel.whisper('cursor',{editor_id:myId,editor_name:myName,color:myColor,offset:o});
+  }
+  // Backup via server
   clearTimeout(cbTmr);cbTmr=setTimeout(()=>fetch(U_CUR,{method:'POST',
     headers:{'Content-Type':'application/json','X-CSRF-TOKEN':CSRF},
-    body:JSON.stringify({editor_id:myId,editor_name:myName,color:myColor,offset:o,is_typing:t})}).catch(()=>{}),80);
+    body:JSON.stringify({editor_id:myId,editor_name:myName,color:myColor,offset:o,is_typing:t})}).catch(()=>{}),200);
 }
 editor.addEventListener('keyup',()=>broadcastCursor(true));
 editor.addEventListener('mouseup',()=>broadcastCursor(false));
@@ -740,7 +757,12 @@ function loadEcho(){
 function connectReverb(){
   try{
     window.Echo=new window.LaravelEcho({broadcaster:'reverb',key:RK,wsHost:RH,wsPort:RP,wssPort:RP,forceTLS:false,enabledTransports:['ws'],disableStats:true});
-    const ch=window.Echo.channel(`document.${DOC_ID}`);
+    
+    // Pakai PRIVATE channel agar bisa whisper
+    const ch=window.Echo.private(`document.${DOC_ID}`);
+    window._wsChannel=ch;
+    
+    // Listen server-side events (legacy fallback)
     ch.listen('.document.updated',data=>applyRemote(data));
     ch.listen('.user.presence',data=>{
       if(data.user_id===myId)return;
@@ -762,11 +784,36 @@ function connectReverb(){
       setTyping(data.editor_id,data.is_typing);clearTimeout(typTmrs[data.editor_id]);
       typTmrs[data.editor_id]=setTimeout(()=>setTyping(data.editor_id,false),3000);
     });
+    
+    // ── WHISPER: Listen perubahan langsung dari peer (tanpa server) ──
+    ch.listenForWhisper('typing', data=>{
+      if(data.editor_id===myId)return;
+      // Apply konten langsung — 0 delay!
+      const pos=saveCaret(editor);
+      isRem=true; editor.innerHTML=data.content; isRem=false;
+      restoreCaret(editor,pos);
+      if(data.title&&data.title!==docTitle.value){docTitle.value=data.title;document.title=data.title+' — Writly';}
+      setSave('saved');
+      // Update online status
+      if(!users[data.editor_id]){users[data.editor_id]={name:data.editor_name,color:data.color||nxtClr(),isTyping:true};renderOnline();}
+      setTyping(data.editor_id,true);clearTimeout(typTmrs[data.editor_id]);
+      typTmrs[data.editor_id]=setTimeout(()=>setTyping(data.editor_id,false),2000);
+      // Show typing bar
+      const bar=$('remoteTypingBar'),nameEl=$('rtbName');
+      if(bar&&nameEl){nameEl.textContent=data.editor_name+' sedang mengetik...';bar.classList.add('show');clearTimeout(_rtbTimer);_rtbTimer=setTimeout(()=>bar.classList.remove('show'),3000);}
+    });
+    
+    ch.listenForWhisper('cursor', data=>{
+      if(data.editor_id===myId)return;
+      if(!users[data.editor_id]){users[data.editor_id]={name:data.editor_name,color:data.color||nxtClr(),isTyping:false};renderOnline();}
+      renderCursor(data.editor_id,data.editor_name,data.color,data.offset);
+    });
+    
     snack('✓ Real-time aktif');
   }catch(e){
     console.error('Reverb error:',e);
-    snack('⚠ WebSocket gagal — menggunakan polling');
-    startPolling();
+    snack('⚠ WebSocket gagal — menggunakan long-polling');
+    longPoll();
   }
 }
 
