@@ -1,42 +1,93 @@
-# 📝 Docs — Real-Time Productivity App
+# ✍️ Writly — Real-Time Productivity App
 
-Aplikasi kolaborasi dokumen real-time mirip Google Docs, dibangun dengan **Laravel 13** + **Laravel Reverb** (WebSocket).
+Aplikasi catatan kolaboratif real-time berbasis web, dibangun dengan **Laravel 13** + **Laravel Reverb** (WebSocket). Dapat diakses oleh siapa saja dalam satu jaringan lokal (LAN) maupun di-deploy ke hosting.
+
+---
 
 ## ✨ Fitur
 
-- ✅ Editor rich-text (Bold, Italic, Underline, List, dll)
-- ✅ Sinkronisasi teks **real-time** via WebSocket (Laravel Reverb)
-- ✅ Lihat siapa saja yang sedang online di dokumen
-- ✅ **Tracking editor**: Lihat siapa yang terakhir mengedit dokumen
-- ✅ **Informasi editor real-time**: Nama dan warna editor ditampilkan saat ada yang mengedit
-- ✅ Auto-save setiap 1.2 detik setelah berhenti mengetik
+### 🔐 Authentication
+- ✅ Register akun baru
+- ✅ Login & Logout
+- ✅ Remember me
+- ✅ Setiap dokumen terikat ke akun pemilik
+
+### 📊 Dashboard
+- ✅ Daftar semua dokumen milik user
+- ✅ Statistik: Total catatan, diedit hari ini, minggu ini, terakhir diedit
+- ✅ Template cepat (Kosong, Resume, Proposal, Catatan Rapat, Laporan)
+- ✅ Pencarian dokumen real-time
+- ✅ Sort (Terbaru / A–Z)
+- ✅ Toggle tampilan Grid / List
+
+### 📝 Manajemen Dokumen
+- ✅ Membuat dokumen baru (dari template atau kosong)
+- ✅ Mengedit judul dokumen
+- ✅ Menghapus dokumen (dengan konfirmasi)
+- ✅ Ganti nama dokumen
+
+### ⚡ Realtime Editor
+- ✅ Rich Text Editor (Bold, Italic, Underline, Strikethrough)
+- ✅ Heading (H1, H2, H3), Font, Font Size
+- ✅ Alignment (Kiri, Tengah, Kanan)
+- ✅ Bullet List & Numbered List
+- ✅ Auto-save setiap 2 detik setelah berhenti mengetik
 - ✅ Simpan manual dengan **Ctrl+S**
-- ✅ Multiple dokumen
-- ✅ Bisa diakses dari LAN (satu jaringan lokal)
-- ✅ Nama editor muncul saat ada yang mengedit
+- ✅ Status simpan: Menyimpan... / Tersimpan / Gagal
+- ✅ **Multi-user editing secara real-time** via WebSocket
+- ✅ Cursor real-time (lihat posisi kursor user lain)
+- ✅ Indikator "Sedang mengetik..."
+
+### 👥 Kolaborasi
+- ✅ Lihat siapa saja yang sedang online di dokumen
+- ✅ Avatar + nama setiap kolaborator
+- ✅ Status online real-time (join/leave/ping)
+- ✅ Log aktivitas (bergabung, mengedit, keluar)
+- ✅ Tracking editor terakhir (nama + waktu + warna)
+
+### 🕐 Version History
+- ✅ Auto-save versi setiap ~60 detik
+- ✅ Lihat daftar riwayat perubahan
+- ✅ Preview versi sebelumnya langsung di editor
+- ✅ Restore ke versi sebelumnya (versi saat ini otomatis disimpan dulu)
+- ✅ Maksimal 50 versi per dokumen
+
+### 📤 Export
+- ✅ Export ke **PDF** (print-friendly, dialog cetak otomatis)
+- ✅ Export ke **DOCX** (Open XML, tanpa package tambahan)
+
+### 🌐 Akses LAN
+- ✅ Bisa diakses dari perangkat lain dalam satu jaringan
+- ✅ Semua perubahan ter-sync real-time antar device
+
+---
 
 ## 🛠 Tech Stack
 
-| Layer      | Teknologi                    |
-|------------|------------------------------|
-| Backend    | Laravel 13 (PHP 8.3)         |
-| WebSocket  | Laravel Reverb               |
-| Database   | MySQL (via XAMPP)            |
-| Frontend   | Blade + Vanilla JS           |
-| Realtime   | Laravel Echo + Pusher.js     |
+| Layer | Teknologi |
+|-------|-----------|
+| Backend | Laravel 13 (PHP 8.3) |
+| WebSocket | Laravel Reverb |
+| Database | MySQL (via XAMPP) |
+| Frontend | Blade + Vanilla JS |
+| Realtime | Laravel Echo + Pusher.js |
+| Styling | Custom CSS (Writly Design System) |
+| Export | PHP ZipArchive (DOCX), Browser Print (PDF) |
+
+---
 
 ## 🚀 Cara Menjalankan
 
 ### 1. Clone & Install
 
 ```bash
-git clone https://github.com/AzrilRyzcho/gdocs.git
-cd gdocs/app
+git clone https://github.com/AzrilRyzcho/gdocs_real-time.git
+cd gdocs_real-time/app
 composer install
 npm install
 ```
 
-### 2. Setup environment
+### 2. Setup Environment
 
 ```bash
 cp .env.example .env
@@ -44,7 +95,7 @@ php artisan key:generate
 ```
 
 Edit `.env`:
-```
+```env
 DB_CONNECTION=mysql
 DB_HOST=127.0.0.1
 DB_PORT=3306
@@ -60,13 +111,13 @@ REVERB_HOST=localhost
 REVERB_PORT=8080
 ```
 
-### 3. Migrate database
+### 3. Migrate Database
 
 ```bash
 php artisan migrate
 ```
 
-### 4. Jalankan server
+### 4. Jalankan Server
 
 Buka **3 terminal** berbeda:
 
@@ -76,19 +127,18 @@ php artisan serve --host=0.0.0.0 --port=8000
 
 # Terminal 2 — Reverb WebSocket
 php artisan reverb:start --host=0.0.0.0 --port=8080
-
-# Terminal 3 — Vite (opsional, untuk development)
-npm run dev
 ```
 
-### 5. Akses dari perangkat lain (LAN)
+### 5. Akses dari Perangkat Lain (LAN)
 
-Cek IP lokal kamu dengan `ipconfig`, lalu buka di browser:
+Cek IP lokal dengan `ipconfig`, lalu buka:
 ```
 http://192.168.x.x:8000
 ```
 
 > Pastikan semua perangkat terhubung ke jaringan/WiFi yang sama.
+
+---
 
 ## 📁 Struktur Utama
 
@@ -96,46 +146,42 @@ http://192.168.x.x:8000
 app/
 ├── app/
 │   ├── Events/
-│   │   ├── DocumentUpdated.php        ← Broadcast event untuk perubahan dokumen
-│   │   ├── UserPresence.php           ← Broadcast event untuk presence user
-│   │   └── CursorMoved.php            ← Broadcast event untuk posisi cursor
+│   │   ├── DocumentUpdated.php       ← Broadcast event perubahan dokumen
+│   │   ├── UserPresence.php          ← Broadcast event presence user
+│   │   └── CursorMoved.php           ← Broadcast event posisi kursor
 │   ├── Http/Controllers/
-│   │   └── DocumentController.php     ← CRUD + broadcast + tracking editor
-│   └── Models/Document.php            ← Model dengan field last_editor
+│   │   ├── Auth/
+│   │   │   ├── LoginController.php   ← Login & Logout
+│   │   │   └── RegisterController.php← Register
+│   │   └── DocumentController.php   ← CRUD + broadcast + version + export
+│   └── Models/
+│       ├── Document.php              ← Model dokumen
+│       ├── DocumentVersion.php       ← Model riwayat versi
+│       └── User.php                  ← Model user
 ├── database/migrations/
+│   ├── *_create_users_table.php
 │   ├── *_create_documents_table.php
-│   └── *_add_editor_tracking_to_documents_table.php
-├── resources/views/documents/
-│   ├── index.blade.php                ← Landing page dengan info editor
-│   └── edit.blade.php                 ← Editor real-time dengan sidebar editor
+│   ├── *_add_editor_tracking_to_documents_table.php
+│   ├── *_add_user_id_to_documents_table.php
+│   └── *_create_document_versions_table.php
+├── public/
+│   ├── css/
+│   │   ├── writly-app.css            ← CSS dashboard
+│   │   └── writly-auth.css           ← CSS halaman auth
+│   └── js/
+│       └── writly-app.js             ← JS dashboard
+├── resources/views/
+│   ├── auth/
+│   │   ├── login.blade.php           ← Halaman login
+│   │   └── register.blade.php        ← Halaman register
+│   └── documents/
+│       ├── index.blade.php           ← Dashboard
+│       ├── edit.blade.php            ← Editor real-time
+│       └── export-pdf.blade.php      ← View export PDF
 └── routes/web.php
 ```
 
-## 🎯 Fitur Tracking Editor
-
-Sistem tracking editor mencatat siapa yang terakhir mengedit dokumen:
-
-### Di Database
-Setiap dokumen menyimpan:
-- `last_editor_id` — ID unik editor
-- `last_editor_name` — Nama editor
-- `last_editor_color` — Warna avatar editor
-- `last_edited_at` — Waktu terakhir diedit
-
-### Di Halaman Index
-Menampilkan "Diedit oleh [Nama] • [waktu]" di setiap kartu dokumen
-
-### Di Halaman Editor
-Sidebar menampilkan:
-- Semua user yang sedang online
-- Info "Terakhir Diedit" dengan avatar dan waktu
-- Log aktivitas (join, leave, edit)
-
-### Real-time Updates
-Saat user dari device lain mengedit:
-- Nama dan warna mereka muncul di sidebar
-- Log aktivitas otomatis bertambah
-- Informasi "Terakhir Diedit" ter-update setelah save
+---
 
 ## 👨‍💻 Developer
 
