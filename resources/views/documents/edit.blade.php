@@ -740,7 +740,29 @@ function connectReverb(){
       typTmrs[data.editor_id]=setTimeout(()=>setTyping(data.editor_id,false),3000);
     });
     snack('✓ Real-time aktif');
-  }catch(e){snack('⚠ WebSocket gagal terhubung');}
+  }catch(e){
+    console.error('Reverb error:',e);
+    snack('⚠ WebSocket gagal — menggunakan polling');
+    startPolling();
+  }
+}
+
+// ── POLLING FALLBACK ──────────────────────────────
+let _pollInterval=null;
+function startPolling(){
+  if(_pollInterval)return;
+  _pollInterval=setInterval(async()=>{
+    try{
+      const r=await fetch(U_SAVE.replace(/\/$/,''),{credentials:'include',headers:{'Accept':'application/json','X-CSRF-TOKEN':CSRF}});
+      const data=await r.json();
+      if(data.content && data.content!==editor.innerHTML){
+        const pos=saveCaret(editor);
+        isRem=true;editor.innerHTML=data.content;isRem=false;
+        restoreCaret(editor,pos);
+      }
+      if(data.title&&data.title!==docTitle.value){docTitle.value=data.title;document.title=data.title+' — Writly';}
+    }catch{}
+  },3000); // poll setiap 3 detik
 }
 
 // expose globals
