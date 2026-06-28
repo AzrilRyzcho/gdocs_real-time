@@ -753,16 +753,41 @@ function startPolling(){
   if(_pollInterval)return;
   _pollInterval=setInterval(async()=>{
     try{
-      const r=await fetch(U_SAVE.replace(/\/$/,''),{credentials:'include',headers:{'Accept':'application/json','X-CSRF-TOKEN':CSRF}});
+      const r=await fetch('/documents/'+DOC_ID,{credentials:'include',headers:{'Accept':'application/json','X-CSRF-TOKEN':CSRF}});
+      if(!r.ok)return;
       const data=await r.json();
       if(data.content && data.content!==editor.innerHTML){
         const pos=saveCaret(editor);
         isRem=true;editor.innerHTML=data.content;isRem=false;
         restoreCaret(editor,pos);
+        setSave('saved');
       }
       if(data.title&&data.title!==docTitle.value){docTitle.value=data.title;document.title=data.title+' — Writly';}
-    }catch{}
-  },3000); // poll setiap 3 detik
+      checkRemoteChanges(data);
+    }catch(e){console.log('Poll error:',e);}
+  },2000);
+}
+// Selalu mulai polling sebagai backup
+startPolling();
+
+// ── LIVE EDITING INDICATOR ────────────────────────
+// Saat konten berubah dari polling, update sidebar Online
+let _lastPolledContent='';
+function checkRemoteChanges(data){
+  if(data.content && data.content!==_lastPolledContent){
+    _lastPolledContent=data.content;
+    // Tampilkan indicator di sidebar bahwa ada yg mengedit
+    if(data.last_editor_name && data.last_editor_name !== myName){
+      const existing = Object.values(users).find(u=>u.name===data.last_editor_name);
+      if(!existing){
+        const uid = 'remote_'+data.last_editor_name;
+        users[uid]={name:data.last_editor_name, color:data.last_editor_color||nxtClr(), isTyping:true};
+        renderOnline();
+        clearTimeout(typTmrs[uid]);
+        typTmrs[uid]=setTimeout(()=>{users[uid].isTyping=false;renderOnline();},5000);
+      }
+    }
+  }
 }
 
 // expose globals

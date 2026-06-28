@@ -112,7 +112,7 @@ class DocumentController extends Controller
      */
     public function show(Document $document): JsonResponse
     {
-        return response()->json($document->only('id', 'title', 'content', 'updated_at'));
+        return response()->json($document->only('id', 'title', 'content', 'updated_at', 'last_editor_name', 'last_editor_color'));
     }
 
     /**
