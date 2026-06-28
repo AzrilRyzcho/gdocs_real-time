@@ -56,6 +56,11 @@ Route::middleware('auth')->group(function () {
     // Rename dokumen
     Route::post('/documents/{document}/rename', [DocumentController::class, 'rename'])->name('documents.rename');
 
+    // Favorite / Archive / Duplicate
+    Route::post('/documents/{document}/favorite', [DocumentController::class, 'toggleFavorite'])->name('documents.favorite');
+    Route::post('/documents/{document}/archive',  [DocumentController::class, 'toggleArchive'])->name('documents.archive');
+    Route::post('/documents/{document}/duplicate', [DocumentController::class, 'duplicate'])->name('documents.duplicate');
+
     // ── VERSION HISTORY ──────────────────────────────────────────────────────
     Route::get('/documents/{document}/versions',                      [DocumentController::class, 'versionHistory'])->name('documents.versions');
     Route::post('/documents/{document}/versions',                     [DocumentController::class, 'saveVersion'])->name('documents.versions.save');

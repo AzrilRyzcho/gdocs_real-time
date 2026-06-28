@@ -15,6 +15,8 @@ class Document extends Model
         'content',
         'share_token',
         'user_id',
+        'is_favorite',
+        'is_archived',
         'last_editor_id',
         'last_editor_name',
         'last_editor_color',

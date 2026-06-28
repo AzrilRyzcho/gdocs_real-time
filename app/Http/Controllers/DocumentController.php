@@ -20,9 +20,10 @@ class DocumentController extends Controller
     public function index()
     {
         $documents = auth()->user()->documents()
+            ->where('is_archived', false)
             ->latest()
             ->take(50)
-            ->get(['id', 'title', 'content', 'share_token', 'updated_at', 'last_editor_name', 'last_editor_color', 'last_edited_at']);
+            ->get(['id', 'title', 'content', 'share_token', 'is_favorite', 'is_archived', 'updated_at', 'last_editor_name', 'last_editor_color', 'last_edited_at']);
         return view('documents.index', compact('documents'));
     }
 
@@ -128,6 +129,45 @@ class DocumentController extends Controller
             'status' => 'ok',
             'title'  => $document->title,
         ]);
+    }
+
+    /**
+     * Toggle favorite status.
+     */
+    public function toggleFavorite(Document $document): JsonResponse
+    {
+        if ($document->user_id !== null && $document->user_id !== auth()->id()) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+        $document->update(['is_favorite' => !$document->is_favorite]);
+        return response()->json(['status' => 'ok', 'is_favorite' => $document->is_favorite]);
+    }
+
+    /**
+     * Toggle archive status.
+     */
+    public function toggleArchive(Document $document): JsonResponse
+    {
+        if ($document->user_id !== null && $document->user_id !== auth()->id()) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+        $document->update(['is_archived' => !$document->is_archived]);
+        return response()->json(['status' => 'ok', 'is_archived' => $document->is_archived]);
+    }
+
+    /**
+     * Duplikasi dokumen.
+     */
+    public function duplicate(Document $document)
+    {
+        if ($document->user_id !== null && $document->user_id !== auth()->id()) {
+            abort(403);
+        }
+        $new = auth()->user()->documents()->create([
+            'title'   => $document->title . ' (Salinan)',
+            'content' => $document->content,
+        ]);
+        return redirect()->route('documents.edit', $new->id);
     }
 
     /**

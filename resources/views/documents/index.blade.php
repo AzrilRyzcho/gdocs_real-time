@@ -345,7 +345,7 @@ body{font-family:var(--font);background:var(--white);color:var(--gray9);min-heig
               <path d="M3 11h12v1.5H3zm0 3.5h12V16H3zm0-7h7v1.5H3z" fill="#fff"/>
             </svg>
             <div class="doc-meta">
-              <div class="doc-title">{{ $doc->title ?: 'Dokumen tanpa judul' }}</div>
+              <div class="doc-title">@if($doc->is_favorite)<span style="color:#f9ab00">★ </span>@endif{{ $doc->title ?: 'Dokumen tanpa judul' }}</div>
               <div class="doc-date">
                 @if($doc->last_editor_name)
                   Dibuka oleh {{ $doc->last_editor_name }} • {{ ($doc->last_edited_at??$doc->updated_at)->locale('id')->diffForHumans() }}
@@ -364,6 +364,18 @@ body{font-family:var(--font);background:var(--white);color:var(--gray9);min-heig
             <div class="ctx-i" onclick="openRename({{ $doc->id }},'{{ addslashes($doc->title) }}')">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="#5f6368"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
               Ganti nama
+            </div>
+            <div class="ctx-i" onclick="toggleFav({{ $doc->id }},this)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="{{ $doc->is_favorite ? '#f9ab00' : 'none' }}" stroke="#5f6368" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+              {{ $doc->is_favorite ? 'Hapus Favorit' : 'Favorit' }}
+            </div>
+            <div class="ctx-i" onclick="duplicateDoc({{ $doc->id }})">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5f6368" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              Duplikasi
+            </div>
+            <div class="ctx-i" onclick="archiveDoc({{ $doc->id }})">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5f6368" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+              Arsipkan
             </div>
             <form id="df-{{ $doc->id }}" method="POST" action="{{ route('documents.destroy',$doc->id) }}">@csrf @method('DELETE')</form>
             <div class="ctx-i del" onclick="openDelete({{ $doc->id }},'{{ addslashes($doc->title) }}')">
@@ -472,6 +484,25 @@ function submitDelete(){
 }
 document.getElementById('deleteModal').addEventListener('click',e=>{if(e.target===document.getElementById('deleteOverlay'))closeDelete();});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeRename();closeDelete();}});
+
+// favorite
+function toggleFav(id,el){
+  document.querySelectorAll('.ctx-menu.open').forEach(x=>x.classList.remove('open'));
+  fetch('/documents/'+id+'/favorite',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-TOKEN':CSRF,'Accept':'application/json'}})
+    .then(r=>r.json()).then(d=>{if(d.status==='ok')location.reload();});
+}
+// duplicate
+function duplicateDoc(id){
+  document.querySelectorAll('.ctx-menu.open').forEach(x=>x.classList.remove('open'));
+  fetch('/documents/'+id+'/duplicate',{method:'POST',credentials:'include',headers:{'X-CSRF-TOKEN':CSRF}})
+    .then(r=>{if(r.redirected)window.location=r.url;else location.reload();});
+}
+// archive
+function archiveDoc(id){
+  document.querySelectorAll('.ctx-menu.open').forEach(x=>x.classList.remove('open'));
+  fetch('/documents/'+id+'/archive',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-TOKEN':CSRF,'Accept':'application/json'}})
+    .then(r=>r.json()).then(d=>{if(d.status==='ok')location.reload();});
+}
 </script>
 </body>
 </html>
