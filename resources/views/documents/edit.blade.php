@@ -539,7 +539,7 @@ function broadcastNow(){
 }
 
 editor.addEventListener('input',()=>{
-  if(isRem)return; broadcastNow(); clearTimeout(saveTmr); saveTmr=setTimeout(saveDoc,150);
+  if(isRem)return; broadcastNow(); clearTimeout(saveTmr); saveTmr=setTimeout(saveDoc,100);
   setTyping(myId,true); clearTimeout(typTmrs[myId]);
   typTmrs[myId]=setTimeout(()=>setTyping(myId,false),1800);
   setSave('saving');
@@ -817,7 +817,7 @@ function connectReverb(){
   }
 }
 
-// ── LONG-POLLING (NEAR REALTIME) ──────────────────
+// ── LONG-POLLING (REALTIME via port 8000) ─────────
 let _myLastInputTime=0;
 let _lastKnownTimestamp=0;
 let _polling=false;
@@ -827,15 +827,16 @@ async function longPoll(){
   _polling=true;
   
   while(true){
-    // Skip jika baru saja ketik sendiri
-    if(Date.now()-_myLastInputTime < 400){
-      await new Promise(r=>setTimeout(r,200));
+    // Skip jika SEDANG mengetik (hanya 200ms guard)
+    if(Date.now()-_myLastInputTime < 200){
+      await new Promise(r=>setTimeout(r,50));
       continue;
     }
     
     try{
+      // Long-poll: server menahan response sampai ada perubahan (max 25 detik)
       const r=await fetch('/api/documents/'+DOC_ID+'/poll?since='+_lastKnownTimestamp,{headers:{'Accept':'application/json'}});
-      if(!r.ok){await new Promise(r=>setTimeout(r,1000));continue;}
+      if(!r.ok){await new Promise(r=>setTimeout(r,500));continue;}
       const data=await r.json();
       
       if(data.updated_at) _lastKnownTimestamp=data.updated_at;
@@ -848,11 +849,14 @@ async function longPoll(){
         checkRemoteChanges(data);
         if(data.title&&data.title!==docTitle.value){docTitle.value=data.title;document.title=data.title+' — Writly';}
       }
+      // Langsung loop lagi tanpa delay — server yang handle timing
     }catch(e){
-      await new Promise(r=>setTimeout(r,1000));
+      await new Promise(r=>setTimeout(r,500));
     }
   }
 }
+// SELALU start long-polling (sebagai primary jika WebSocket gagal)
+longPoll();
 // Start long-polling
 longPoll();
 
