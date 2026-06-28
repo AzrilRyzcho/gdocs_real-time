@@ -97,6 +97,44 @@ Route::middleware('auth')->group(function () {
 Route::get('/shared/{token}', [\App\Http\Controllers\ShareController::class, 'accessByToken'])->name('shared.access');
 
 // Public polling endpoint (untuk sync lintas device)
-Route::get('/api/documents/{document}/poll', function(\App\Models\Document $document) {
-    return response()->json($document->only('id', 'title', 'content', 'updated_at', 'last_editor_name', 'last_editor_color'));
+Route::get('/api/documents/{document}/poll', function(\App\Models\Document $document, \Illuminate\Http\Request $request) {
+    $since = $request->query('since'); // timestamp terakhir client tahu
+    
+    // Long-polling: tunggu sampai ada perubahan (max 25 detik)
+    $timeout = 25;
+    $start = time();
+    
+    while (time() - $start < $timeout) {
+        $doc = \App\Models\Document::find($document->id);
+        $docTime = $doc->updated_at->timestamp;
+        
+        // Jika ada perubahan sejak terakhir client cek
+        if ($since && $docTime > (int)$since) {
+            return response()->json([
+                'content' => $doc->content,
+                'title' => $doc->title,
+                'updated_at' => $docTime,
+                'last_editor_name' => $doc->last_editor_name,
+                'last_editor_color' => $doc->last_editor_color,
+                'changed' => true,
+            ]);
+        }
+        
+        // Jika tidak ada since (first load)
+        if (!$since) {
+            return response()->json([
+                'content' => $doc->content,
+                'title' => $doc->title,
+                'updated_at' => $docTime,
+                'last_editor_name' => $doc->last_editor_name,
+                'last_editor_color' => $doc->last_editor_color,
+                'changed' => false,
+            ]);
+        }
+        
+        usleep(100000); // sleep 100ms lalu cek lagi
+    }
+    
+    // Timeout — tidak ada perubahan
+    return response()->json(['changed' => false, 'updated_at' => $document->updated_at->timestamp]);
 });

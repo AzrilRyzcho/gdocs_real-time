@@ -770,32 +770,44 @@ function connectReverb(){
   }
 }
 
-// ── POLLING FALLBACK ──────────────────────────────
-let _pollInterval=null;
+// ── LONG-POLLING (NEAR REALTIME) ──────────────────
 let _myLastInputTime=0;
+let _lastKnownTimestamp=0;
+let _polling=false;
 
-function startPolling(){
-  if(_pollInterval)return;
-  _pollInterval=setInterval(async()=>{
-    // Hanya skip jika user INI baru saja mengetik (< 500ms lalu)
-    if(Date.now()-_myLastInputTime < 500) return;
+async function longPoll(){
+  if(_polling) return;
+  _polling=true;
+  
+  while(true){
+    // Skip jika baru saja ketik sendiri
+    if(Date.now()-_myLastInputTime < 400){
+      await new Promise(r=>setTimeout(r,200));
+      continue;
+    }
+    
     try{
-      const r=await fetch('/api/documents/'+DOC_ID+'/poll',{headers:{'Accept':'application/json'}});
-      if(!r.ok)return;
+      const r=await fetch('/api/documents/'+DOC_ID+'/poll?since='+_lastKnownTimestamp,{headers:{'Accept':'application/json'}});
+      if(!r.ok){await new Promise(r=>setTimeout(r,1000));continue;}
       const data=await r.json();
-      // Hanya apply jika dari user LAIN
-      if(data.content && data.content!==editor.innerHTML && data.last_editor_name && data.last_editor_name!==myName){
+      
+      if(data.updated_at) _lastKnownTimestamp=data.updated_at;
+      
+      if(data.changed && data.content && data.last_editor_name && data.last_editor_name!==myName){
         const pos=saveCaret(editor);
         isRem=true;editor.innerHTML=data.content;isRem=false;
         restoreCaret(editor,pos);
         setSave('saved');
         checkRemoteChanges(data);
+        if(data.title&&data.title!==docTitle.value){docTitle.value=data.title;document.title=data.title+' — Writly';}
       }
-    }catch(e){}
-  },250);
+    }catch(e){
+      await new Promise(r=>setTimeout(r,1000));
+    }
+  }
 }
-// Selalu mulai polling sebagai backup
-startPolling();
+// Start long-polling
+longPoll();
 
 // ── LIVE EDITING INDICATOR ────────────────────────
 // Saat konten berubah dari polling, update sidebar Online
