@@ -527,7 +527,7 @@ function broadcastNow(){
 }
 
 editor.addEventListener('input',()=>{
-  if(isRem)return; broadcastNow(); clearTimeout(saveTmr); saveTmr=setTimeout(saveDoc,2000);
+  if(isRem)return; broadcastNow(); clearTimeout(saveTmr); saveTmr=setTimeout(saveDoc,300);
   setTyping(myId,true); clearTimeout(typTmrs[myId]);
   typTmrs[myId]=setTimeout(()=>setTyping(myId,false),1800);
   setSave('saving');
@@ -787,7 +787,7 @@ function startPolling(){
       if(data.title&&data.title!==docTitle.value){docTitle.value=data.title;document.title=data.title+' — Writly';}
       checkRemoteChanges(data);
     }catch(e){console.log('Poll error:',e);}
-  },500);
+  },200);
 }
 // Selalu mulai polling sebagai backup
 startPolling();
