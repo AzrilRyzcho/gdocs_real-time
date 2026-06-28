@@ -13,11 +13,12 @@ class DocumentUpdated implements ShouldBroadcastNow
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
     public function __construct(
-        public readonly int    $documentId,
-        public readonly string $content,
-        public readonly string $title,
-        public readonly string $editorId,   // UUID dari user yang mengedit
-        public readonly string $editorName,
+        public readonly int     $documentId,
+        public readonly string  $content,
+        public readonly string  $title,
+        public readonly string  $editorId,   // UUID dari user yang mengedit
+        public readonly string  $editorName,
+        public readonly ?string $color = null,
     ) {}
 
     /**
@@ -43,6 +44,7 @@ class DocumentUpdated implements ShouldBroadcastNow
             'title'        => $this->title,
             'editor_id'    => $this->editorId,
             'editor_name'  => $this->editorName,
+            'color'        => $this->color,
             'updated_at'   => now()->toIso8601String(),
         ];
     }

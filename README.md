@@ -1,4 +1,4 @@
-# 📝 GDocs Lite — Real-Time Productivity App
+# 📝 Docs — Real-Time Productivity App
 
 Aplikasi kolaborasi dokumen real-time mirip Google Docs, dibangun dengan **Laravel 13** + **Laravel Reverb** (WebSocket).
 
@@ -7,6 +7,8 @@ Aplikasi kolaborasi dokumen real-time mirip Google Docs, dibangun dengan **Larav
 - ✅ Editor rich-text (Bold, Italic, Underline, List, dll)
 - ✅ Sinkronisasi teks **real-time** via WebSocket (Laravel Reverb)
 - ✅ Lihat siapa saja yang sedang online di dokumen
+- ✅ **Tracking editor**: Lihat siapa yang terakhir mengedit dokumen
+- ✅ **Informasi editor real-time**: Nama dan warna editor ditampilkan saat ada yang mengedit
 - ✅ Auto-save setiap 1.2 detik setelah berhenti mengetik
 - ✅ Simpan manual dengan **Ctrl+S**
 - ✅ Multiple dokumen
@@ -93,17 +95,47 @@ http://192.168.x.x:8000
 ```
 app/
 ├── app/
-│   ├── Events/DocumentUpdated.php     ← Broadcast event
+│   ├── Events/
+│   │   ├── DocumentUpdated.php        ← Broadcast event untuk perubahan dokumen
+│   │   ├── UserPresence.php           ← Broadcast event untuk presence user
+│   │   └── CursorMoved.php            ← Broadcast event untuk posisi cursor
 │   ├── Http/Controllers/
-│   │   └── DocumentController.php     ← CRUD + broadcast
-│   └── Models/Document.php
+│   │   └── DocumentController.php     ← CRUD + broadcast + tracking editor
+│   └── Models/Document.php            ← Model dengan field last_editor
 ├── database/migrations/
-│   └── *_create_documents_table.php
+│   ├── *_create_documents_table.php
+│   └── *_add_editor_tracking_to_documents_table.php
 ├── resources/views/documents/
-│   ├── index.blade.php                ← Landing page
-│   └── edit.blade.php                 ← Editor real-time
+│   ├── index.blade.php                ← Landing page dengan info editor
+│   └── edit.blade.php                 ← Editor real-time dengan sidebar editor
 └── routes/web.php
 ```
+
+## 🎯 Fitur Tracking Editor
+
+Sistem tracking editor mencatat siapa yang terakhir mengedit dokumen:
+
+### Di Database
+Setiap dokumen menyimpan:
+- `last_editor_id` — ID unik editor
+- `last_editor_name` — Nama editor
+- `last_editor_color` — Warna avatar editor
+- `last_edited_at` — Waktu terakhir diedit
+
+### Di Halaman Index
+Menampilkan "Diedit oleh [Nama] • [waktu]" di setiap kartu dokumen
+
+### Di Halaman Editor
+Sidebar menampilkan:
+- Semua user yang sedang online
+- Info "Terakhir Diedit" dengan avatar dan waktu
+- Log aktivitas (join, leave, edit)
+
+### Real-time Updates
+Saat user dari device lain mengedit:
+- Nama dan warna mereka muncul di sidebar
+- Log aktivitas otomatis bertambah
+- Informasi "Terakhir Diedit" ter-update setelah save
 
 ## 👨‍💻 Developer
 

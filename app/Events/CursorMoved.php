@@ -4,43 +4,33 @@ namespace App\Events;
 
 use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
-use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
+use Illuminate\Broadcasting\PresenceChannel;
+use Illuminate\Broadcasting\PrivateChannel;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
 
-class CursorMoved implements ShouldBroadcastNow
+class CursorMoved
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
-    public function __construct(
-        public readonly int    $documentId,
-        public readonly string $editorId,
-        public readonly string $editorName,
-        public readonly string $color,
-        public readonly int    $offset,      // posisi karakter dalam teks
-        public readonly bool   $isTyping,
-    ) {}
+    /**
+     * Create a new event instance.
+     */
+    public function __construct()
+    {
+        //
+    }
 
+    /**
+     * Get the channels the event should broadcast on.
+     *
+     * @return array<int, Channel>
+     */
     public function broadcastOn(): array
     {
         return [
-            new Channel("document.{$this->documentId}"),
-        ];
-    }
-
-    public function broadcastAs(): string
-    {
-        return 'cursor.moved';
-    }
-
-    public function broadcastWith(): array
-    {
-        return [
-            'editor_id'   => $this->editorId,
-            'editor_name' => $this->editorName,
-            'color'       => $this->color,
-            'offset'      => $this->offset,
-            'is_typing'   => $this->isTyping,
+            new PrivateChannel('channel-name'),
         ];
     }
 }

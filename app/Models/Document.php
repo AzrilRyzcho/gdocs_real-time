@@ -15,6 +15,14 @@ class Document extends Model
         'content',
         'share_token',
         'user_id',
+        'last_editor_id',
+        'last_editor_name',
+        'last_editor_color',
+        'last_edited_at',
+    ];
+
+    protected $casts = [
+        'last_edited_at' => 'datetime',
     ];
 
     protected static function booted(): void
@@ -29,5 +37,10 @@ class Document extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function versions()
+    {
+        return $this->hasMany(DocumentVersion::class)->orderByDesc('created_at');
     }
 }
