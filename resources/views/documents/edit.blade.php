@@ -161,6 +161,24 @@ html,body{height:100%;overflow:hidden;font-family:var(--font);color:var(--ink);b
 .rc-c{position:absolute;width:2px;top:0;bottom:0;animation:blink .9s infinite;}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.15}}
 .rc-l{position:absolute;top:-22px;left:0;padding:2px 8px;border-radius:4px 4px 4px 0;font-size:11px;font-weight:600;color:#fff;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.2);}
+
+/* ── REMOTE USER TYPING INDICATOR ── */
+#remoteTypingBar{
+  position:absolute;bottom:12px;left:50%;transform:translateX(-50%);
+  display:none;align-items:center;gap:8px;
+  background:#fff;border:1.5px solid var(--border);border-radius:99px;
+  padding:6px 16px;box-shadow:0 2px 12px rgba(0,0,0,.1);
+  z-index:60;font-size:12px;color:var(--ink-2);white-space:nowrap;
+  animation:fadeSlide .2s ease;
+}
+#remoteTypingBar.show{display:flex;}
+@keyframes fadeSlide{from{opacity:0;transform:translateX(-50%) translateY(8px);}to{opacity:1;transform:translateX(-50%) translateY(0);}}
+.rtb-dot{width:8px;height:8px;border-radius:50%;animation:pulse .8s infinite;}
+.rtb-dots{display:flex;gap:3px;}
+.rtb-dots span{width:5px;height:5px;border-radius:50%;background:var(--v);animation:bounce .6s infinite;}
+.rtb-dots span:nth-child(2){animation-delay:.1s;}
+.rtb-dots span:nth-child(3){animation-delay:.2s;}
+@keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
 </style>
 
 {{-- ── NAME MODAL ── --}}
@@ -286,6 +304,10 @@ html,body{height:100%;overflow:hidden;font-family:var(--font);color:var(--ink);b
     <div class="page">
       <div id="editor" contenteditable="true" spellcheck="true" data-placeholder="Mulai menulis sesuatu yang luar biasa...">{!! $document->content !!}</div>
       <div id="rcContainer"></div>
+      <div id="remoteTypingBar">
+        <div class="rtb-dots"><span></span><span></span><span></span></div>
+        <span id="rtbName">Seseorang sedang mengetik...</span>
+      </div>
     </div>
   </div>
 
@@ -765,7 +787,7 @@ function startPolling(){
       if(data.title&&data.title!==docTitle.value){docTitle.value=data.title;document.title=data.title+' — Writly';}
       checkRemoteChanges(data);
     }catch(e){console.log('Poll error:',e);}
-  },2000);
+  },500);
 }
 // Selalu mulai polling sebagai backup
 startPolling();
@@ -773,19 +795,30 @@ startPolling();
 // ── LIVE EDITING INDICATOR ────────────────────────
 // Saat konten berubah dari polling, update sidebar Online
 let _lastPolledContent='';
+let _rtbTimer=null;
 function checkRemoteChanges(data){
   if(data.content && data.content!==_lastPolledContent){
     _lastPolledContent=data.content;
     // Tampilkan indicator di sidebar bahwa ada yg mengedit
     if(data.last_editor_name && data.last_editor_name !== myName){
-      const existing = Object.values(users).find(u=>u.name===data.last_editor_name);
-      if(!existing){
-        const uid = 'remote_'+data.last_editor_name;
-        users[uid]={name:data.last_editor_name, color:data.last_editor_color||nxtClr(), isTyping:true};
-        renderOnline();
-        clearTimeout(typTmrs[uid]);
-        typTmrs[uid]=setTimeout(()=>{users[uid].isTyping=false;renderOnline();},5000);
+      // Show typing bar
+      const bar=$('remoteTypingBar');
+      const nameEl=$('rtbName');
+      if(bar&&nameEl){
+        nameEl.textContent=data.last_editor_name+' sedang mengetik...';
+        bar.classList.add('show');
+        clearTimeout(_rtbTimer);
+        _rtbTimer=setTimeout(()=>bar.classList.remove('show'),4000);
       }
+      // Update sidebar online
+      const uid = 'remote_'+data.last_editor_name;
+      users[uid]={name:data.last_editor_name, color:data.last_editor_color||nxtClr(), isTyping:true};
+      renderOnline();
+      clearTimeout(typTmrs[uid]);
+      typTmrs[uid]=setTimeout(()=>{
+        if(users[uid])users[uid].isTyping=false;
+        renderOnline();
+      },5000);
     }
   }
 }
