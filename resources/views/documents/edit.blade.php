@@ -531,6 +531,10 @@ editor.addEventListener('input',()=>{
   setTyping(myId,true); clearTimeout(typTmrs[myId]);
   typTmrs[myId]=setTimeout(()=>setTyping(myId,false),1800);
   setSave('saving');
+  // Tandai user sedang aktif mengetik — pause polling
+  _userTyping=true;
+  clearTimeout(_typingTimeout);
+  _typingTimeout=setTimeout(()=>{_userTyping=false;},2000);
 });
 
 docTitle.addEventListener('input',()=>{
@@ -771,9 +775,14 @@ function connectReverb(){
 
 // ── POLLING FALLBACK ──────────────────────────────
 let _pollInterval=null;
+let _userTyping=false;
+let _typingTimeout=null;
+
 function startPolling(){
   if(_pollInterval)return;
   _pollInterval=setInterval(async()=>{
+    // JANGAN poll saat user sendiri sedang mengetik
+    if(_userTyping) return;
     try{
       const r=await fetch('/api/documents/'+DOC_ID+'/poll',{headers:{'Accept':'application/json'}});
       if(!r.ok)return;
@@ -787,7 +796,7 @@ function startPolling(){
       if(data.title&&data.title!==docTitle.value){docTitle.value=data.title;document.title=data.title+' — Writly';}
       checkRemoteChanges(data);
     }catch(e){console.log('Poll error:',e);}
-  },200);
+  },500);
 }
 // Selalu mulai polling sebagai backup
 startPolling();
