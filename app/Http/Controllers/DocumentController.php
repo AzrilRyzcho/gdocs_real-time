@@ -19,11 +19,21 @@ class DocumentController extends Controller
      */
     public function index()
     {
-        $documents = auth()->user()->documents()
+        // Dokumen milik sendiri
+        $ownDocs = auth()->user()->documents()
             ->where('is_archived', false)
             ->latest()
-            ->take(50)
             ->get(['id', 'title', 'content', 'share_token', 'is_favorite', 'is_archived', 'updated_at', 'last_editor_name', 'last_editor_color', 'last_edited_at']);
+
+        // Dokumen yang di-share ke user ini
+        $sharedDocs = auth()->user()->sharedDocuments()
+            ->where('is_archived', false)
+            ->latest()
+            ->get(['documents.id', 'title', 'content', 'share_token', 'is_favorite', 'is_archived', 'updated_at', 'last_editor_name', 'last_editor_color', 'last_edited_at']);
+
+        // Gabungkan, sort by updated_at desc
+        $documents = $ownDocs->merge($sharedDocs)->sortByDesc('updated_at')->take(50)->values();
+
         return view('documents.index', compact('documents'));
     }
 
@@ -45,11 +55,17 @@ class DocumentController extends Controller
      */
     public function edit(Document $document)
     {
-        // Cek ownership — dokumen lama (user_id null) boleh diakses siapa saja
-        if ($document->user_id !== null && $document->user_id !== auth()->id()) {
+        // Cek ownership ATAU shared access
+        $isOwner  = $document->user_id === null || $document->user_id === auth()->id();
+        $isShared = $document->shares()->where('user_id', auth()->id())->exists();
+
+        if (!$isOwner && !$isShared) {
             abort(403, 'Anda tidak punya akses ke dokumen ini.');
         }
-        return view('documents.edit', compact('document'));
+
+        $shareRole = $isOwner ? 'owner' : $document->shares()->where('user_id', auth()->id())->value('role');
+
+        return view('documents.edit', compact('document', 'shareRole'));
     }
 
     /**

@@ -50,4 +50,14 @@ class Document extends Model
     {
         return $this->hasMany(Comment::class);
     }
+
+    public function shares()
+    {
+        return $this->hasMany(DocumentShare::class);
+    }
+
+    public function sharedUsers()
+    {
+        return $this->belongsToMany(User::class, 'document_shares')->withPivot('role')->withTimestamps();
+    }
 }

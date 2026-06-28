@@ -86,4 +86,12 @@ Route::middleware('auth')->group(function () {
     // ── EXPORT ───────────────────────────────────────────────────────────────
     Route::get('/documents/{document}/export/pdf',  [DocumentController::class, 'exportPdf'])->name('documents.export.pdf');
     Route::get('/documents/{document}/export/docx', [DocumentController::class, 'exportDocx'])->name('documents.export.docx');
+
+    // ── SHARE ────────────────────────────────────────────────────────────────
+    Route::get('/documents/{document}/shares',  [\App\Http\Controllers\ShareController::class, 'index'])->name('shares.index');
+    Route::post('/documents/{document}/shares', [\App\Http\Controllers\ShareController::class, 'store'])->name('shares.store');
+    Route::delete('/shares/{share}',            [\App\Http\Controllers\ShareController::class, 'destroy'])->name('shares.destroy');
 });
+
+// Public share link
+Route::get('/shared/{token}', [\App\Http\Controllers\ShareController::class, 'accessByToken'])->name('shared.access');

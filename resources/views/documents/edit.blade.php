@@ -206,6 +206,10 @@ html,body{height:100%;overflow:hidden;font-family:var(--font);color:var(--ink);b
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       Ekspor
     </button>
+    <button class="tb-btn" onclick="openShareModal()">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+      Bagikan
+    </button>
     <button class="tb-btn tb-btn-primary" onclick="toggleSidebar()">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
       Kolaborator
@@ -352,6 +356,38 @@ html,body{height:100%;overflow:hidden;font-family:var(--font);color:var(--ink);b
 </div>
 
 <div id="snackbar"></div>
+
+{{-- SHARE MODAL --}}
+<div class="nm-overlay" id="shareModal">
+  <div class="nm-card" style="max-width:480px;width:92vw" onclick="event.stopPropagation()">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <h3 style="font-size:18px;font-weight:600;color:var(--ink)">Bagikan Dokumen</h3>
+      <button onclick="closeShareModal()" style="border:none;background:none;cursor:pointer;color:var(--ink-4);padding:4px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:16px;">
+      <input type="email" id="shareEmail" class="nm-input" placeholder="Email pengguna..." style="margin:0;flex:1">
+      <select id="shareRole" style="height:44px;border:1.5px solid var(--border);border-radius:var(--r-sm);padding:0 10px;font-size:13px;font-family:var(--font);color:var(--ink);background:var(--bg);">
+        <option value="editor">Editor</option>
+        <option value="viewer">Viewer</option>
+      </select>
+      <button onclick="submitShare()" style="height:44px;padding:0 18px;background:var(--v);color:#fff;border:none;border-radius:var(--r-sm);font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font);">Kirim</button>
+    </div>
+    <div id="shareMsg" style="font-size:13px;margin-bottom:12px;display:none;padding:8px 12px;border-radius:6px;"></div>
+    <div style="border-top:1px solid var(--border);padding-top:12px;">
+      <div style="font-size:12px;font-weight:600;color:var(--ink-3);margin-bottom:8px">Link bagikan:</div>
+      <div style="display:flex;gap:6px;">
+        <input type="text" id="shareLinkInput" readonly style="flex:1;height:36px;border:1.5px solid var(--border);border-radius:var(--r-sm);padding:0 10px;font-size:12px;color:var(--ink-3);background:var(--bg);outline:none;font-family:monospace;">
+        <button onclick="copyShareLink()" style="height:36px;padding:0 14px;border:1.5px solid var(--border);border-radius:var(--r-sm);font-size:12px;background:none;cursor:pointer;font-family:var(--font);color:var(--ink-2);">Salin</button>
+      </div>
+    </div>
+    <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;">
+      <div style="font-size:12px;font-weight:600;color:var(--ink-3);margin-bottom:8px">Orang yang punya akses:</div>
+      <div id="shareList" style="max-height:150px;overflow-y:auto;"></div>
+    </div>
+  </div>
+</div>
 </div>{{-- end flex column --}}
 
 <script>
@@ -744,6 +780,66 @@ editor.addEventListener('click',e=>{
 });
 window.insertChecklist=insertChecklist;
 window.toggleCheckItem=toggleCheckItem;
+
+// ── SHARE ─────────────────────────────────────────
+function openShareModal(){
+  $('shareModal').classList.add('show');
+  loadShares();
+}
+function closeShareModal(){$('shareModal').classList.remove('show');}
+$('shareModal')?.addEventListener('click',e=>{if(e.target===$('shareModal'))closeShareModal();});
+
+async function loadShares(){
+  try{
+    const r=await fetch('/documents/'+DOC_ID+'/shares',{credentials:'include',headers:{'Accept':'application/json','X-CSRF-TOKEN':CSRF}});
+    const d=await r.json();
+    $('shareLinkInput').value=d.share_link||'';
+    const list=$('shareList');
+    if(!d.shares||d.shares.length===0){list.innerHTML='<div style="font-size:12px;color:var(--ink-4)">Belum dibagikan</div>';return;}
+    list.innerHTML=d.shares.map(s=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-2)">
+      <span style="flex:1;font-size:13px;color:var(--ink)">${s.user.name} <span style="color:var(--ink-4)">(${s.user.email})</span></span>
+      <span style="font-size:11px;padding:2px 8px;border-radius:99px;background:${s.role==='editor'?'#e8f0fe':'#f1f3f4'};color:${s.role==='editor'?'#1a73e8':'#5f6368'}">${s.role}</span>
+      <button onclick="removeShare(${s.id})" style="border:none;background:none;cursor:pointer;color:var(--red);font-size:12px">×</button>
+    </div>`).join('');
+  }catch{}
+}
+
+async function submitShare(){
+  const email=$('shareEmail').value.trim();
+  const role=$('shareRole').value;
+  const msg=$('shareMsg');
+  if(!email){msg.style.display='block';msg.style.background='#fce8e6';msg.style.color='#d93025';msg.textContent='Masukkan email';return;}
+  try{
+    const r=await fetch('/documents/'+DOC_ID+'/shares',{method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json','X-CSRF-TOKEN':CSRF,'Accept':'application/json'},
+      body:JSON.stringify({email,role})});
+    const d=await r.json();
+    if(d.status==='ok'){
+      msg.style.display='block';msg.style.background='#e6f4ea';msg.style.color='#137333';msg.textContent=d.message;
+      $('shareEmail').value='';loadShares();
+    }else{
+      msg.style.display='block';msg.style.background='#fce8e6';msg.style.color='#d93025';msg.textContent=d.error||'Gagal';
+    }
+  }catch{msg.style.display='block';msg.style.background='#fce8e6';msg.style.color='#d93025';msg.textContent='Gagal mengirim';}
+  setTimeout(()=>msg.style.display='none',4000);
+}
+
+async function removeShare(id){
+  await fetch('/shares/'+id,{method:'DELETE',credentials:'include',headers:{'X-CSRF-TOKEN':CSRF}});
+  loadShares();
+}
+
+function copyShareLink(){
+  const inp=$('shareLinkInput');
+  inp.select();document.execCommand('copy');
+  snack('✓ Link disalin ke clipboard');
+}
+
+window.openShareModal=openShareModal;
+window.closeShareModal=closeShareModal;
+window.submitShare=submitShare;
+window.removeShare=removeShare;
+window.copyShareLink=copyShareLink;
 
 // ── COMMENTS ──────────────────────────────────────
 async function loadComments(){
