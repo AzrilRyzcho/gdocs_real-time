@@ -96,21 +96,53 @@ Route::middleware('auth')->group(function () {
 // Public share link
 Route::get('/shared/{token}', [\App\Http\Controllers\ShareController::class, 'accessByToken'])->name('shared.access');
 
-// Public polling endpoint (untuk sync lintas device)
-Route::get('/api/documents/{document}/poll', function(\App\Models\Document $document, \Illuminate\Http\Request $request) {
-    $since = $request->query('since');
-    $timeout = 25;
-    $start = time();
-    while (time() - $start < $timeout) {
-        $doc = \App\Models\Document::find($document->id);
-        $docTime = $doc->updated_at->timestamp;
-        if ($since && $docTime > (int)$since) {
-            return response()->json(['content'=>$doc->content,'title'=>$doc->title,'updated_at'=>$docTime,'last_editor_name'=>$doc->last_editor_name,'last_editor_color'=>$doc->last_editor_color,'changed'=>true]);
-        }
-        if (!$since) {
-            return response()->json(['content'=>$doc->content,'title'=>$doc->title,'updated_at'=>$docTime,'last_editor_name'=>$doc->last_editor_name,'last_editor_color'=>$doc->last_editor_color,'changed'=>false]);
-        }
-        usleep(50000); // 50ms — sangat cepat
-    }
-    return response()->json(['changed'=>false,'updated_at'=>$document->updated_at->timestamp]);
+// Public polling endpoint (instant response — tidak menahan server)
+Route::get('/api/documents/{document}/poll', function(\App\Models\Document $document) {
+    return response()->json([
+        'content' => $document->content,
+        'title' => $document->title,
+        'updated_at' => $document->updated_at->timestamp,
+        'last_editor_name' => $document->last_editor_name,
+        'last_editor_color' => $document->last_editor_color,
+    ]);
+});
+
+// Public save endpoint
+Route::post('/api/documents/{document}/save', function(\App\Models\Document $document, \Illuminate\Http\Request $request) {
+    $document->update([
+        'content'          => $request->input('content', $document->content),
+        'title'            => $request->input('title', $document->title),
+        'last_editor_name' => $request->input('editor_name', 'Anonim'),
+        'last_editor_color'=> $request->input('color', '#6366f1'),
+        'last_edited_at'   => now(),
+    ]);
+    
+    // Broadcast ke semua listener via Reverb (instant WebSocket delivery)
+    try {
+        broadcast(new \App\Events\DocumentUpdated(
+            documentId: $document->id,
+            content:    $document->content,
+            title:      $document->title,
+            editorId:   $request->input('editor_id', 'anon'),
+            editorName: $request->input('editor_name', 'Anonim'),
+            color:      $request->input('color', '#6366f1'),
+        ));
+    } catch (\Throwable $e) {}
+    
+    return response()->json(['status' => 'ok']);
+});
+
+// Public cursor broadcast endpoint (tanpa CSRF)
+Route::post('/api/documents/{document}/cursor', function(\App\Models\Document $document, \Illuminate\Http\Request $request) {
+    try {
+        broadcast(new \App\Events\CursorMoved(
+            documentId: $document->id,
+            editorId:   $request->input('editor_id', 'anon'),
+            editorName: $request->input('editor_name', 'Anonim'),
+            color:      $request->input('color', '#6366f1'),
+            offset:     $request->input('offset', 0),
+            isTyping:   $request->input('is_typing', false),
+        ));
+    } catch (\Throwable $e) {}
+    return response()->json(['status' => 'ok']);
 });

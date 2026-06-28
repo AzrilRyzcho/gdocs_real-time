@@ -157,10 +157,10 @@ html,body{height:100%;overflow:hidden;font-family:var(--font);color:var(--ink);b
 .nm-btn{width:100%;height:44px;background:var(--v);color:#fff;border:none;border-radius:var(--r-sm);font-size:14px;font-weight:600;cursor:pointer;font-family:var(--font);transition:background var(--trans);}
 .nm-btn:hover{background:var(--v-dark);}
 /* ── REMOTE CURSORS ── */
-.rc{position:absolute;pointer-events:none;z-index:50;}
-.rc-c{position:absolute;width:2px;top:0;bottom:0;animation:blink .9s infinite;}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.15}}
-.rc-l{position:absolute;top:-22px;left:0;padding:2px 8px;border-radius:4px 4px 4px 0;font-size:11px;font-weight:600;color:#fff;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.2);}
+.rc{position:absolute;pointer-events:none;z-index:50;transition:left .12s ease-out, top .12s ease-out;}
+.rc-c{position:absolute;width:2.5px;top:0;bottom:0;border-radius:2px;animation:blink .9s infinite;}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+.rc-l{position:absolute;top:-24px;left:-2px;padding:3px 8px;border-radius:6px 6px 6px 0;font-size:10.5px;font-weight:600;color:#fff;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.2);letter-spacing:.01em;}
 
 /* ── REMOTE USER TYPING INDICATOR ── */
 #remoteTypingBar{
@@ -303,7 +303,6 @@ html,body{height:100%;overflow:hidden;font-family:var(--font);color:var(--ink);b
   <div id="editor-area">
     <div class="page">
       <div id="editor" contenteditable="true" spellcheck="true" data-placeholder="Mulai menulis sesuatu yang luar biasa...">{!! $document->content !!}</div>
-      <div id="rcContainer"></div>
       <div id="remoteTypingBar">
         <div class="rtb-dots"><span></span><span></span><span></span></div>
         <span id="rtbName">Seseorang sedang mengetik...</span>
@@ -409,7 +408,7 @@ html,body{height:100%;overflow:hidden;font-family:var(--font);color:var(--ink);b
 // ── CONFIG ────────────────────────────────────────
 const DOC_ID = {{ $document->id }};
 const CSRF   = document.querySelector('meta[name="csrf-token"]').content;
-const RK='{{env("REVERB_APP_KEY")}}', RH='{{env("REVERB_HOST","127.0.0.1")}}', RP={{env("REVERB_PORT",8080)}};
+const RK='{{env("REVERB_APP_KEY")}}', RH='{{env("VITE_REVERB_HOST","127.0.0.1")}}', RP={{env("REVERB_PORT",8080)}};
 const U_SAVE = '/documents/{{ $document->id }}';
 const U_BC   = '/documents/{{ $document->id }}/broadcast';
 const U_CUR  = '/documents/{{ $document->id }}/cursor';
@@ -508,38 +507,25 @@ function setSave(s){
 async function saveDoc(){
   if(!myId)return; setSave('saving');
   try{
-    const r=await fetch(U_SAVE,{method:'PATCH',credentials:'include',
-      headers:{'Content-Type':'application/json','X-CSRF-TOKEN':CSRF,'Accept':'application/json'},
-      body:JSON.stringify({content:editor.innerHTML,title:docTitle.value,editor_id:myId,editor_name:myName,color:myColor})});
-    if(r.ok){
-      setSave('saved');
-      const now=Date.now();
-      if(now-_lastVerSave>60000){_lastVerSave=now;saveVersion();}
-    }else setSave('err');
+    const r=await fetch('/api/documents/'+DOC_ID+'/save',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({content:editor.innerHTML,title:docTitle.value,editor_id:myId,editor_name:myName,color:myColor})
+    });
+    if(r.ok){setSave('saved');}
+    else{setSave('err');}
   }catch{setSave('err');}
 }
 
 function broadcastNow(){
-  if(!myId)return;
-  // WHISPER: kirim langsung ke peer via WebSocket — 0 delay, tanpa server
-  if(window._wsChannel){
-    window._wsChannel.whisper('typing',{
-      content:editor.innerHTML,
-      title:docTitle.value,
-      editor_id:myId,
-      editor_name:myName,
-      color:myColor
-    });
-  }
-  // Tetap broadcast via server sebagai backup (untuk save ke DB)
-  clearTimeout(bcTmr);
-  bcTmr=setTimeout(()=>fetch(U_BC,{method:'POST',credentials:'include',
-    headers:{'Content-Type':'application/json','X-CSRF-TOKEN':CSRF},
-    body:JSON.stringify({content:editor.innerHTML,title:docTitle.value,editor_id:myId,editor_name:myName,color:myColor})}).catch(()=>{}),200);
+  // broadcastNow sekarang SAMA dengan saveDoc — save + broadcast sekaligus
+  // Tidak perlu terpisah lagi
 }
 
 editor.addEventListener('input',()=>{
-  if(isRem)return; broadcastNow(); clearTimeout(saveTmr); saveTmr=setTimeout(saveDoc,100);
+  if(isRem)return;
+  clearTimeout(saveTmr);
+  saveTmr=setTimeout(saveDoc, 30); // save setiap 30ms setelah keystroke
   setTyping(myId,true); clearTimeout(typTmrs[myId]);
   typTmrs[myId]=setTimeout(()=>setTyping(myId,false),1800);
   setSave('saving');
@@ -572,8 +558,12 @@ function applyRemote(data){
   if(!users[data.editor_id]){const c=data.color||nxtClr();users[data.editor_id]={name:data.editor_name,color:c,isTyping:false};logAct('edit',data.editor_name,c,'mengedit');renderOnline();}
   const pos=saveCaret(editor);isRem=true;editor.innerHTML=data.content;isRem=false;restoreCaret(editor,pos);
   if(data.title&&data.title!==docTitle.value){docTitle.value=data.title;document.title=data.title+' — Writly';}
-  setSave('saved'); setTyping(data.editor_id,true); clearTimeout(typTmrs[data.editor_id]);
+  setSave('saved');
+  setTyping(data.editor_id,true); clearTimeout(typTmrs[data.editor_id]);
   typTmrs[data.editor_id]=setTimeout(()=>setTyping(data.editor_id,false),2500);
+  // Show typing bar
+  const bar=$('remoteTypingBar'),nameEl=$('rtbName');
+  if(bar&&nameEl){nameEl.textContent=data.editor_name+' sedang mengetik...';bar.classList.add('show');clearTimeout(_rtbTimer);_rtbTimer=setTimeout(()=>bar.classList.remove('show'),3000);}
 }
 
 // ── SHORTCUTS ─────────────────────────────────────
@@ -642,30 +632,54 @@ function getCoords(ed,offset){
   }catch{return null;}
 }
 function renderCursor(id,name,color,offset){
-  const ed=$('editor'),container=$('rcContainer');if(!container||!ed)return;
+  const ed=$('editor'),page=ed?.closest('.page');if(!page||!ed)return;
   if(!rCursors[id]){
     const w=document.createElement('div');w.className='rc';
     const c=document.createElement('div');c.className='rc-c';c.style.background=color;
     const l=document.createElement('div');l.className='rc-l';l.style.background=color;l.textContent=name;
-    w.appendChild(c);w.appendChild(l);container.appendChild(w);rCursors[id]={el:w};
+    w.appendChild(c);w.appendChild(l);page.appendChild(w);rCursors[id]={el:w};
   }
-  const wrap=rCursors[id].el,co=getCoords(ed,offset);if(!co)return;
-  const er=ed.getBoundingClientRect(),pr=ed.closest('.page').getBoundingClientRect();
-  wrap.style.cssText=`left:${er.left-pr.left+co.x}px;top:${er.top-pr.top+co.y}px;display:block;position:absolute;pointer-events:none;z-index:50;`;
+  const wrap=rCursors[id].el;
+  // Update label name & color (in case it changed)
+  wrap.querySelector('.rc-l').textContent=name;
+  wrap.querySelector('.rc-l').style.background=color;
+  wrap.querySelector('.rc-c').style.background=color;
+  
+  const co=getCoords(ed,offset);if(!co)return;
+  const er=ed.getBoundingClientRect(),pr=page.getBoundingClientRect();
+  const left=er.left-pr.left+co.x;
+  const top=er.top-pr.top+co.y;
+  wrap.style.left=left+'px';
+  wrap.style.top=top+'px';
+  wrap.style.display='block';
+  wrap.style.position='absolute';
   wrap.querySelector('.rc-c').style.height=co.h+'px';
-  clearTimeout(curTmrs[id]);curTmrs[id]=setTimeout(()=>{if(wrap)wrap.style.display='none';},4000);
+  
+  // Auto-hide after 8 seconds of no movement
+  clearTimeout(curTmrs[id]);
+  curTmrs[id]=setTimeout(()=>{if(wrap)wrap.style.display='none';},8000);
 }
+
+// Remove cursor when user leaves
+function removeCursor(id){
+  if(rCursors[id]){
+    rCursors[id].el.remove();
+    delete rCursors[id];
+  }
+}
+
 let cbTmr=null;
 function broadcastCursor(t){
-  if(!myId)return;const o=saveCaret($('editor'))||0;
-  // Whisper cursor langsung ke peer
-  if(window._wsChannel){
-    window._wsChannel.whisper('cursor',{editor_id:myId,editor_name:myName,color:myColor,offset:o});
-  }
-  // Backup via server
-  clearTimeout(cbTmr);cbTmr=setTimeout(()=>fetch(U_CUR,{method:'POST',
-    headers:{'Content-Type':'application/json','X-CSRF-TOKEN':CSRF},
-    body:JSON.stringify({editor_id:myId,editor_name:myName,color:myColor,offset:o,is_typing:t})}).catch(()=>{}),200);
+  if(!myId)return;
+  const o=saveCaret($('editor'))||0;
+  clearTimeout(cbTmr);
+  cbTmr=setTimeout(()=>{
+    fetch('/api/documents/'+DOC_ID+'/cursor',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({editor_id:myId,editor_name:myName,color:myColor,offset:o,is_typing:t})
+    }).catch(()=>{});
+  },30); // 30ms debounce — very fast
 }
 editor.addEventListener('keyup',()=>broadcastCursor(true));
 editor.addEventListener('mouseup',()=>broadcastCursor(false));
@@ -758,8 +772,8 @@ function connectReverb(){
   try{
     window.Echo=new window.LaravelEcho({broadcaster:'reverb',key:RK,wsHost:RH,wsPort:RP,wssPort:RP,forceTLS:false,enabledTransports:['ws'],disableStats:true});
     
-    // Pakai PRIVATE channel agar bisa whisper
-    const ch=window.Echo.private(`document.${DOC_ID}`);
+    // Pakai PUBLIC channel (sudah terbukti bekerja)
+    const ch=window.Echo.channel(`document.${DOC_ID}`);
     window._wsChannel=ch;
     
     // Listen server-side events (legacy fallback)
@@ -774,39 +788,21 @@ function connectReverb(){
         offTmrs[data.user_id]=setTimeout(()=>{if(users[data.user_id]){logAct('leave',users[data.user_id].name,users[data.user_id].color,'keluar');delete users[data.user_id];renderOnline();}},20000);
       }else if(data.action==='leave'){
         if(users[data.user_id]){logAct('leave',users[data.user_id].name,users[data.user_id].color,'keluar');snack('👋 '+users[data.user_id].name+' keluar');delete users[data.user_id];renderOnline();}
+        removeCursor(data.user_id);
         clearTimeout(offTmrs[data.user_id]);
       }
     });
     ch.listen('.cursor.moved',data=>{
       if(data.editor_id===myId)return;
-      if(!users[data.editor_id]){const c=data.color||nxtClr();users[data.editor_id]={name:data.editor_name,color:c,isTyping:false};renderOnline();}
+      if(!users[data.editor_id]){
+        const c=data.color||nxtClr();
+        users[data.editor_id]={name:data.editor_name,color:c,isTyping:false};
+        renderOnline();
+      }
       renderCursor(data.editor_id,data.editor_name,data.color,data.offset);
-      setTyping(data.editor_id,data.is_typing);clearTimeout(typTmrs[data.editor_id]);
+      setTyping(data.editor_id,data.is_typing);
+      clearTimeout(typTmrs[data.editor_id]);
       typTmrs[data.editor_id]=setTimeout(()=>setTyping(data.editor_id,false),3000);
-    });
-    
-    // ── WHISPER: Listen perubahan langsung dari peer (tanpa server) ──
-    ch.listenForWhisper('typing', data=>{
-      if(data.editor_id===myId)return;
-      // Apply konten langsung — 0 delay!
-      const pos=saveCaret(editor);
-      isRem=true; editor.innerHTML=data.content; isRem=false;
-      restoreCaret(editor,pos);
-      if(data.title&&data.title!==docTitle.value){docTitle.value=data.title;document.title=data.title+' — Writly';}
-      setSave('saved');
-      // Update online status
-      if(!users[data.editor_id]){users[data.editor_id]={name:data.editor_name,color:data.color||nxtClr(),isTyping:true};renderOnline();}
-      setTyping(data.editor_id,true);clearTimeout(typTmrs[data.editor_id]);
-      typTmrs[data.editor_id]=setTimeout(()=>setTyping(data.editor_id,false),2000);
-      // Show typing bar
-      const bar=$('remoteTypingBar'),nameEl=$('rtbName');
-      if(bar&&nameEl){nameEl.textContent=data.editor_name+' sedang mengetik...';bar.classList.add('show');clearTimeout(_rtbTimer);_rtbTimer=setTimeout(()=>bar.classList.remove('show'),3000);}
-    });
-    
-    ch.listenForWhisper('cursor', data=>{
-      if(data.editor_id===myId)return;
-      if(!users[data.editor_id]){users[data.editor_id]={name:data.editor_name,color:data.color||nxtClr(),isTyping:false};renderOnline();}
-      renderCursor(data.editor_id,data.editor_name,data.color,data.offset);
     });
     
     snack('✓ Real-time aktif');
@@ -817,7 +813,7 @@ function connectReverb(){
   }
 }
 
-// ── LONG-POLLING (REALTIME via port 8000) ─────────
+// ── FAST POLLING (port 8000, no server blocking) ──
 let _myLastInputTime=0;
 let _lastKnownTimestamp=0;
 let _polling=false;
@@ -827,35 +823,35 @@ async function longPoll(){
   _polling=true;
   
   while(true){
-    // Skip jika SEDANG mengetik (hanya 200ms guard)
-    if(Date.now()-_myLastInputTime < 200){
-      await new Promise(r=>setTimeout(r,50));
+    if(Date.now()-_myLastInputTime < 150){
+      await new Promise(r=>setTimeout(r,100));
       continue;
     }
-    
     try{
-      // Long-poll: server menahan response sampai ada perubahan (max 25 detik)
-      const r=await fetch('/api/documents/'+DOC_ID+'/poll?since='+_lastKnownTimestamp,{headers:{'Accept':'application/json'}});
-      if(!r.ok){await new Promise(r=>setTimeout(r,500));continue;}
+      const r=await fetch('/poll.php?id='+DOC_ID,{headers:{'Accept':'application/json'}});
+      if(!r.ok){await new Promise(r=>setTimeout(r,300));continue;}
       const data=await r.json();
       
-      if(data.updated_at) _lastKnownTimestamp=data.updated_at;
-      
-      if(data.changed && data.content && data.last_editor_name && data.last_editor_name!==myName){
+      if(data.updated_at && data.updated_at > _lastKnownTimestamp && data.last_editor_name && data.last_editor_name!==myName){
+        _lastKnownTimestamp=data.updated_at;
         const pos=saveCaret(editor);
         isRem=true;editor.innerHTML=data.content;isRem=false;
         restoreCaret(editor,pos);
         setSave('saved');
-        checkRemoteChanges(data);
+        // Show typing indicator
+        const bar=$('remoteTypingBar'),nameEl=$('rtbName');
+        if(bar&&nameEl){nameEl.textContent=data.last_editor_name+' sedang mengetik...';bar.classList.add('show');clearTimeout(_rtbTimer);_rtbTimer=setTimeout(()=>bar.classList.remove('show'),3000);}
         if(data.title&&data.title!==docTitle.value){docTitle.value=data.title;document.title=data.title+' — Writly';}
+      } else if(data.updated_at) {
+        _lastKnownTimestamp=data.updated_at;
       }
-      // Langsung loop lagi tanpa delay — server yang handle timing
+      
+      await new Promise(r=>setTimeout(r,100));
     }catch(e){
       await new Promise(r=>setTimeout(r,500));
     }
   }
 }
-// SELALU start long-polling (sebagai primary jika WebSocket gagal)
 longPoll();
 // Start long-polling
 longPoll();
