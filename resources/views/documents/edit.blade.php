@@ -513,7 +513,6 @@ async function saveDoc(){
       body:JSON.stringify({content:editor.innerHTML,title:docTitle.value,editor_id:myId,editor_name:myName,color:myColor})});
     if(r.ok){
       setSave('saved');
-      _lastSaveTime=Date.now();
       const now=Date.now();
       if(now-_lastVerSave>60000){_lastVerSave=now;saveVersion();}
     }else setSave('err');
@@ -532,10 +531,7 @@ editor.addEventListener('input',()=>{
   setTyping(myId,true); clearTimeout(typTmrs[myId]);
   typTmrs[myId]=setTimeout(()=>setTyping(myId,false),1800);
   setSave('saving');
-  // Tandai user sedang aktif mengetik — pause polling
-  _userTyping=true;
-  clearTimeout(_typingTimeout);
-  _typingTimeout=setTimeout(()=>{_userTyping=false;},800);
+  _myLastInputTime=Date.now();
 });
 
 docTitle.addEventListener('input',()=>{
@@ -776,20 +772,18 @@ function connectReverb(){
 
 // ── POLLING FALLBACK ──────────────────────────────
 let _pollInterval=null;
-let _userTyping=false;
-let _typingTimeout=null;
-let _lastSaveTime=0;
+let _myLastInputTime=0;
 
 function startPolling(){
   if(_pollInterval)return;
   _pollInterval=setInterval(async()=>{
-    if(_userTyping) return;
-    if(Date.now()-_lastSaveTime < 800) return;
+    // Hanya skip jika user INI baru saja mengetik (< 500ms lalu)
+    if(Date.now()-_myLastInputTime < 500) return;
     try{
       const r=await fetch('/api/documents/'+DOC_ID+'/poll',{headers:{'Accept':'application/json'}});
       if(!r.ok)return;
       const data=await r.json();
-      // Hanya update jika editor LAIN yang mengubah
+      // Hanya apply jika dari user LAIN
       if(data.content && data.content!==editor.innerHTML && data.last_editor_name && data.last_editor_name!==myName){
         const pos=saveCaret(editor);
         isRem=true;editor.innerHTML=data.content;isRem=false;
@@ -798,7 +792,7 @@ function startPolling(){
         checkRemoteChanges(data);
       }
     }catch(e){}
-  },300);
+  },250);
 }
 // Selalu mulai polling sebagai backup
 startPolling();
