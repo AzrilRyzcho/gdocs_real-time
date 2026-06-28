@@ -89,6 +89,11 @@ html,body{height:100%;overflow:hidden;font-family:var(--font);color:var(--ink);b
 #editor h3{font-size:14pt;margin:9pt 0 4pt;font-weight:600;}
 #editor ul,#editor ol{margin:0 0 10px 24px;}
 #editor li{margin-bottom:4px;}
+/* Checklist */
+#editor .checklist-item{display:flex;align-items:flex-start;gap:8px;margin:6px 0;list-style:none;}
+#editor .checklist-item input[type="checkbox"]{width:16px;height:16px;margin-top:3px;accent-color:var(--v);cursor:pointer;flex-shrink:0;}
+#editor .checklist-item.done span{text-decoration:line-through;color:var(--ink-4);}
+#editor .checklist-item span{flex:1;outline:none;}
 /* ── RIGHT SIDEBAR ── */
 #sidebar{width:260px;background:var(--bg-card);border-left:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;transition:width var(--trans);}
 #sidebar.collapsed{width:0;border:none;}
@@ -257,6 +262,9 @@ html,body{height:100%;overflow:hidden;font-family:var(--font);color:var(--ink);b
   </button>
   <button class="t" data-cmd="insertOrderedList" title="Numbered list">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></svg>
+  </button>
+  <button class="t" onclick="insertChecklist()" title="To-Do Checklist">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="6" height="6" rx="1"/><path d="M5 8l1.5 1.5L9 6"/><line x1="13" y1="8" x2="21" y2="8"/><rect x="3" y="14" width="6" height="6" rx="1"/><line x1="13" y1="17" x2="21" y2="17"/></svg>
   </button>
   <div class="t-div"></div>
   <button class="t" data-cmd="removeFormat" title="Hapus format">
@@ -697,6 +705,28 @@ window.selectVersion=selectVersion;
 window.toggleSidebar=toggleSidebar;
 window.switchTab=switchTab;
 window.exportPDF=exportPDF;
+
+// ── TO-DO CHECKLIST ───────────────────────────────
+function insertChecklist(){
+  const html=`<div class="checklist-item"><input type="checkbox" onchange="toggleCheckItem(this)"><span contenteditable="true">Tugas baru</span></div>`;
+  document.execCommand('insertHTML',false,html);
+  editor.focus(); broadcastNow();
+}
+function toggleCheckItem(cb){
+  const item=cb.closest('.checklist-item');
+  if(item){item.classList.toggle('done',cb.checked);}
+  broadcastNow(); clearTimeout(saveTmr); saveTmr=setTimeout(saveDoc,2000);
+}
+// Delegate click for checkboxes loaded from saved content
+editor.addEventListener('click',e=>{
+  if(e.target.type==='checkbox'&&e.target.closest('.checklist-item')){
+    const item=e.target.closest('.checklist-item');
+    item.classList.toggle('done',e.target.checked);
+    broadcastNow(); clearTimeout(saveTmr); saveTmr=setTimeout(saveDoc,2000);
+  }
+});
+window.insertChecklist=insertChecklist;
+window.toggleCheckItem=toggleCheckItem;
 </script>
 </body>
 </html>

@@ -61,6 +61,11 @@ Route::middleware('auth')->group(function () {
     Route::post('/documents/{document}/archive',  [DocumentController::class, 'toggleArchive'])->name('documents.archive');
     Route::post('/documents/{document}/duplicate', [DocumentController::class, 'duplicate'])->name('documents.duplicate');
 
+    // Settings
+    Route::get('/settings',          [\App\Http\Controllers\SettingsController::class, 'index'])->name('settings');
+    Route::post('/settings/profile', [\App\Http\Controllers\SettingsController::class, 'updateProfile'])->name('settings.profile');
+    Route::post('/settings/password',[\App\Http\Controllers\SettingsController::class, 'updatePassword'])->name('settings.password');
+
     // ── VERSION HISTORY ──────────────────────────────────────────────────────
     Route::get('/documents/{document}/versions',                      [DocumentController::class, 'versionHistory'])->name('documents.versions');
     Route::post('/documents/{document}/versions',                     [DocumentController::class, 'saveVersion'])->name('documents.versions.save');
