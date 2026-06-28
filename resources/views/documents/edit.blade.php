@@ -753,7 +753,7 @@ function startPolling(){
   if(_pollInterval)return;
   _pollInterval=setInterval(async()=>{
     try{
-      const r=await fetch('/documents/'+DOC_ID,{credentials:'include',headers:{'Accept':'application/json','X-CSRF-TOKEN':CSRF}});
+      const r=await fetch('/api/documents/'+DOC_ID+'/poll',{headers:{'Accept':'application/json'}});
       if(!r.ok)return;
       const data=await r.json();
       if(data.content && data.content!==editor.innerHTML){

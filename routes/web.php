@@ -95,3 +95,8 @@ Route::middleware('auth')->group(function () {
 
 // Public share link
 Route::get('/shared/{token}', [\App\Http\Controllers\ShareController::class, 'accessByToken'])->name('shared.access');
+
+// Public polling endpoint (untuk sync lintas device)
+Route::get('/api/documents/{document}/poll', function(\App\Models\Document $document) {
+    return response()->json($document->only('id', 'title', 'content', 'updated_at', 'last_editor_name', 'last_editor_color'));
+});
