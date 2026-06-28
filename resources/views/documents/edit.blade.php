@@ -513,6 +513,7 @@ async function saveDoc(){
       body:JSON.stringify({content:editor.innerHTML,title:docTitle.value,editor_id:myId,editor_name:myName,color:myColor})});
     if(r.ok){
       setSave('saved');
+      _lastSaveTime=Date.now();
       const now=Date.now();
       if(now-_lastVerSave>60000){_lastVerSave=now;saveVersion();}
     }else setSave('err');
@@ -777,25 +778,26 @@ function connectReverb(){
 let _pollInterval=null;
 let _userTyping=false;
 let _typingTimeout=null;
+let _lastSaveTime=0;
 
 function startPolling(){
   if(_pollInterval)return;
   _pollInterval=setInterval(async()=>{
-    // JANGAN poll saat user sendiri sedang mengetik
     if(_userTyping) return;
+    if(Date.now()-_lastSaveTime < 2000) return;
     try{
       const r=await fetch('/api/documents/'+DOC_ID+'/poll',{headers:{'Accept':'application/json'}});
       if(!r.ok)return;
       const data=await r.json();
-      if(data.content && data.content!==editor.innerHTML){
+      // Hanya update jika editor LAIN yang mengubah
+      if(data.content && data.content!==editor.innerHTML && data.last_editor_name && data.last_editor_name!==myName){
         const pos=saveCaret(editor);
         isRem=true;editor.innerHTML=data.content;isRem=false;
         restoreCaret(editor,pos);
         setSave('saved');
+        checkRemoteChanges(data);
       }
-      if(data.title&&data.title!==docTitle.value){docTitle.value=data.title;document.title=data.title+' — Writly';}
-      checkRemoteChanges(data);
-    }catch(e){console.log('Poll error:',e);}
+    }catch(e){}
   },500);
 }
 // Selalu mulai polling sebagai backup
