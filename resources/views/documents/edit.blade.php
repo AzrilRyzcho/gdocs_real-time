@@ -528,14 +528,14 @@ function broadcastNow(){
 }
 
 editor.addEventListener('input',()=>{
-  if(isRem)return; broadcastNow(); clearTimeout(saveTmr); saveTmr=setTimeout(saveDoc,300);
+  if(isRem)return; broadcastNow(); clearTimeout(saveTmr); saveTmr=setTimeout(saveDoc,150);
   setTyping(myId,true); clearTimeout(typTmrs[myId]);
   typTmrs[myId]=setTimeout(()=>setTyping(myId,false),1800);
   setSave('saving');
   // Tandai user sedang aktif mengetik — pause polling
   _userTyping=true;
   clearTimeout(_typingTimeout);
-  _typingTimeout=setTimeout(()=>{_userTyping=false;},2000);
+  _typingTimeout=setTimeout(()=>{_userTyping=false;},800);
 });
 
 docTitle.addEventListener('input',()=>{
@@ -784,7 +784,7 @@ function startPolling(){
   if(_pollInterval)return;
   _pollInterval=setInterval(async()=>{
     if(_userTyping) return;
-    if(Date.now()-_lastSaveTime < 2000) return;
+    if(Date.now()-_lastSaveTime < 800) return;
     try{
       const r=await fetch('/api/documents/'+DOC_ID+'/poll',{headers:{'Accept':'application/json'}});
       if(!r.ok)return;
@@ -798,7 +798,7 @@ function startPolling(){
         checkRemoteChanges(data);
       }
     }catch(e){}
-  },500);
+  },300);
 }
 // Selalu mulai polling sebagai backup
 startPolling();
