@@ -387,7 +387,7 @@ html,body{height:100%;overflow:hidden;font-family:var(--font);color:var(--ink);b
 // ── CONFIG ────────────────────────────────────────
 const DOC_ID = {{ $document->id }};
 const CSRF   = document.querySelector('meta[name="csrf-token"]').content;
-const RK='{{env("REVERB_APP_KEY")}}', RH=window.location.hostname, RP={{env("REVERB_PORT",8080)}};
+const RK='{{env("REVERB_APP_KEY")}}', RH='{{env("REVERB_HOST","127.0.0.1")}}', RP={{env("REVERB_PORT",8080)}};
 const U_SAVE = '/documents/{{ $document->id }}';
 const U_BC   = '/documents/{{ $document->id }}/broadcast';
 const U_CUR  = '/documents/{{ $document->id }}/cursor';
@@ -501,7 +501,7 @@ function broadcastNow(){
   if(!myId)return; clearTimeout(bcTmr);
   bcTmr=setTimeout(()=>fetch(U_BC,{method:'POST',credentials:'include',
     headers:{'Content-Type':'application/json','X-CSRF-TOKEN':CSRF},
-    body:JSON.stringify({content:editor.innerHTML,title:docTitle.value,editor_id:myId,editor_name:myName,color:myColor})}).catch(()=>{}),50);
+    body:JSON.stringify({content:editor.innerHTML,title:docTitle.value,editor_id:myId,editor_name:myName,color:myColor})}).catch(()=>{}),30);
 }
 
 editor.addEventListener('input',()=>{
