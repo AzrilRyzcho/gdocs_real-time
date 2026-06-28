@@ -45,4 +45,9 @@ class Document extends Model
     {
         return $this->hasMany(DocumentVersion::class)->orderByDesc('created_at');
     }
+
+    public function comments()
+    {
+        return $this->hasMany(Comment::class);
+    }
 }

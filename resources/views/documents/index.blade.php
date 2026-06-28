@@ -187,6 +187,17 @@ body{font-family:var(--font);background:var(--white);color:var(--gray9);min-heig
     <input type="text" id="searchInput" placeholder="Telusuri">
   </div>
   <div class="top-right">
+    <button class="top-icon-btn" onclick="toggleNotifs()" id="notifBellBtn" title="Notifikasi" style="position:relative">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+      <span id="notifBadge" style="display:none;position:absolute;top:4px;right:4px;width:8px;height:8px;background:#d93025;border-radius:50%;"></span>
+    </button>
+    <div id="notifPanel" style="display:none;position:absolute;top:60px;right:80px;width:340px;background:#fff;border:1px solid #e8eaed;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,.15);z-index:300;max-height:400px;overflow:hidden;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #e8eaed">
+        <span style="font-size:14px;font-weight:500">Notifikasi</span>
+        <button onclick="markAllRead()" style="font-size:12px;color:#1a73e8;border:none;background:none;cursor:pointer;font-family:var(--font)">Tandai semua dibaca</button>
+      </div>
+      <div id="notifList" style="overflow-y:auto;max-height:340px;padding:4px 0"></div>
+    </div>
     <button class="top-icon-btn">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M6 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm6-8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm6-14c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 4c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
     </button>
@@ -508,6 +519,58 @@ function archiveDoc(id){
   fetch('/documents/'+id+'/archive',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-CSRF-TOKEN':CSRF,'Accept':'application/json'}})
     .then(r=>r.json()).then(d=>{if(d.status==='ok')location.reload();});
 }
+
+// ── NOTIFICATIONS ─────────────────────────────────
+let _notifOpen=false;
+function toggleNotifs(){
+  _notifOpen=!_notifOpen;
+  document.getElementById('notifPanel').style.display=_notifOpen?'block':'none';
+  if(_notifOpen)loadNotifs();
+}
+async function loadNotifs(){
+  const list=document.getElementById('notifList');
+  list.innerHTML='<div style="padding:20px;text-align:center;color:#80868b;font-size:13px">Memuat...</div>';
+  try{
+    const r=await fetch('/notifications',{credentials:'include',headers:{'Accept':'application/json','X-CSRF-TOKEN':CSRF}});
+    const data=await r.json();
+    if(data.unread>0)document.getElementById('notifBadge').style.display='block';
+    else document.getElementById('notifBadge').style.display='none';
+    if(!data.notifications||data.notifications.length===0){
+      list.innerHTML='<div style="padding:28px;text-align:center;color:#80868b;font-size:13px">Tidak ada notifikasi</div>';
+      return;
+    }
+    list.innerHTML=data.notifications.map(n=>`
+      <div style="padding:10px 16px;border-bottom:1px solid #f1f3f4;${n.read?'opacity:.6':''}cursor:pointer;" onclick="readNotif(${n.id},'${n.link||''}')">
+        <div style="font-size:13px;font-weight:${n.read?'400':'500'};color:#202124">${n.title}</div>
+        ${n.body?'<div style="font-size:12px;color:#5f6368;margin-top:2px">'+n.body+'</div>':''}
+        <div style="font-size:11px;color:#80868b;margin-top:3px">${n.created_at}</div>
+      </div>`).join('');
+  }catch{list.innerHTML='<div style="padding:20px;text-align:center;color:#d93025;font-size:13px">Gagal</div>';}
+}
+async function markAllRead(){
+  await fetch('/notifications/read-all',{method:'POST',credentials:'include',headers:{'X-CSRF-TOKEN':CSRF}});
+  document.getElementById('notifBadge').style.display='none';
+  loadNotifs();
+}
+async function readNotif(id,link){
+  await fetch('/notifications/'+id+'/read',{method:'POST',credentials:'include',headers:{'X-CSRF-TOKEN':CSRF}});
+  if(link)window.location=link;
+  else loadNotifs();
+}
+// Load notif count on page load
+(async function(){
+  try{
+    const r=await fetch('/notifications',{credentials:'include',headers:{'Accept':'application/json','X-CSRF-TOKEN':CSRF}});
+    const d=await r.json();
+    if(d.unread>0)document.getElementById('notifBadge').style.display='block';
+  }catch{}
+})();
+// Close notif panel on outside click
+document.addEventListener('click',e=>{
+  if(!e.target.closest('#notifBellBtn')&&!e.target.closest('#notifPanel')){
+    _notifOpen=false;document.getElementById('notifPanel').style.display='none';
+  }
+});
 </script>
 </body>
 </html>

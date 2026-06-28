@@ -289,6 +289,7 @@ html,body{height:100%;overflow:hidden;font-family:var(--font);color:var(--ink);b
   <div id="sidebar">
     <div class="sb-tab-bar">
       <button class="sb-tab active" onclick="switchTab('collab')">Online</button>
+      <button class="sb-tab" onclick="switchTab('comments')">Komentar</button>
       <button class="sb-tab" onclick="switchTab('activity')">Aktivitas</button>
     </div>
 
@@ -319,6 +320,17 @@ html,body{height:100%;overflow:hidden;font-family:var(--font);color:var(--ink);b
     {{-- Activity tab --}}
     <div class="sb-tab-pane" id="paneActivity">
       <div class="act-log" id="actLog"></div>
+    </div>
+
+    {{-- Comments tab --}}
+    <div class="sb-tab-pane" id="paneComments">
+      <div class="sb-section" style="padding-bottom:8px">
+        <form id="commentForm" onsubmit="postComment(event)">
+          <textarea id="commentInput" rows="2" placeholder="Tulis komentar... (@nama untuk mention)" style="width:100%;border:1.5px solid var(--border);border-radius:var(--r);padding:8px 10px;font-size:13px;font-family:var(--font);resize:none;outline:none;"></textarea>
+          <button type="submit" style="margin-top:6px;height:30px;padding:0 14px;background:var(--v);color:#fff;border:none;border-radius:var(--r);font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);">Kirim</button>
+        </form>
+      </div>
+      <div id="commentsList" style="overflow-y:auto;flex:1;padding:0 12px 12px;"></div>
     </div>
   </div>
 </div>
@@ -417,9 +429,14 @@ function logAct(type,name,color,text){
 }
 // Tab switcher
 function switchTab(name){
-  document.querySelectorAll('.sb-tab').forEach((t,i)=>{const n=i===0?'collab':'activity';t.classList.toggle('active',n===name);});
+  document.querySelectorAll('.sb-tab').forEach((t,i)=>{
+    const names=['collab','comments','activity'];
+    t.classList.toggle('active',names[i]===name);
+  });
   $('paneCollab').classList.toggle('active',name==='collab');
+  $('paneComments').classList.toggle('active',name==='comments');
   $('paneActivity').classList.toggle('active',name==='activity');
+  if(name==='comments') loadComments();
 }
 // Sidebar toggle
 function toggleSidebar(){$('sidebar').classList.toggle('collapsed');}
@@ -727,6 +744,81 @@ editor.addEventListener('click',e=>{
 });
 window.insertChecklist=insertChecklist;
 window.toggleCheckItem=toggleCheckItem;
+
+// ── COMMENTS ──────────────────────────────────────
+async function loadComments(){
+  const list=$('commentsList');
+  list.innerHTML='<div style="text-align:center;color:var(--ink-4);padding:16px;font-size:12px">Memuat...</div>';
+  try{
+    const r=await fetch('/documents/'+DOC_ID+'/comments',{credentials:'include',headers:{'Accept':'application/json','X-CSRF-TOKEN':CSRF}});
+    const data=await r.json();
+    if(!data.comments||data.comments.length===0){
+      list.innerHTML='<div style="text-align:center;color:var(--ink-4);padding:24px;font-size:12px">Belum ada komentar</div>';
+      return;
+    }
+    list.innerHTML=data.comments.map(c=>renderComment(c)).join('');
+  }catch{list.innerHTML='<div style="color:var(--red);padding:12px;font-size:12px">Gagal memuat</div>';}
+}
+
+function renderComment(c){
+  const replies=c.replies?c.replies.map(r=>`
+    <div style="margin-left:16px;padding:6px 0;border-left:2px solid var(--border);padding-left:10px;margin-top:6px;">
+      <div style="font-size:12px;font-weight:600;color:var(--ink-2)">${r.user_name}</div>
+      <div style="font-size:12.5px;color:var(--ink);margin-top:2px">${r.body}</div>
+      <div style="font-size:10px;color:var(--ink-4);margin-top:2px">${r.created_at}</div>
+    </div>`).join(''):'';
+
+  return `<div style="padding:10px 0;border-bottom:1px solid var(--border-2);${c.resolved?'opacity:.5':''}">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:12.5px;font-weight:600;color:var(--ink-2)">${c.user_name}</span>
+      <span style="font-size:10px;color:var(--ink-4)">${c.created_at}</span>
+    </div>
+    <div style="font-size:13px;color:var(--ink);margin-top:4px;line-height:1.5">${formatMentions(c.body)}</div>
+    ${replies}
+    <div style="display:flex;gap:8px;margin-top:6px">
+      <button onclick="replyTo(${c.id})" style="font-size:11px;color:var(--v);background:none;border:none;cursor:pointer;font-family:var(--font)">Balas</button>
+      <button onclick="resolveComment(${c.id})" style="font-size:11px;color:var(--green);background:none;border:none;cursor:pointer;font-family:var(--font)">${c.resolved?'Buka kembali':'Resolve'}</button>
+      ${c.is_mine?'<button onclick="deleteComment('+c.id+')" style="font-size:11px;color:var(--red);background:none;border:none;cursor:pointer;font-family:var(--font)">Hapus</button>':''}
+    </div>
+  </div>`;
+}
+
+function formatMentions(text){
+  return text.replace(/@(\w+)/g,'<span style="color:var(--v);font-weight:600">@$1</span>');
+}
+
+let _replyParent=null;
+function replyTo(id){_replyParent=id;$('commentInput').placeholder='Balas komentar...';$('commentInput').focus();}
+
+async function postComment(e){
+  e.preventDefault();
+  const body=$('commentInput').value.trim();
+  if(!body)return;
+  try{
+    await fetch('/documents/'+DOC_ID+'/comments',{method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json','X-CSRF-TOKEN':CSRF,'Accept':'application/json'},
+      body:JSON.stringify({body:body,parent_id:_replyParent})});
+    $('commentInput').value='';_replyParent=null;
+    $('commentInput').placeholder='Tulis komentar... (@nama untuk mention)';
+    loadComments();
+  }catch{snack('❌ Gagal mengirim komentar');}
+}
+
+async function resolveComment(id){
+  await fetch('/comments/'+id+'/resolve',{method:'POST',credentials:'include',headers:{'X-CSRF-TOKEN':CSRF}});
+  loadComments();
+}
+
+async function deleteComment(id){
+  if(!confirm('Hapus komentar ini?'))return;
+  await fetch('/comments/'+id,{method:'DELETE',credentials:'include',headers:{'X-CSRF-TOKEN':CSRF}});
+  loadComments();
+}
+
+window.postComment=postComment;
+window.replyTo=replyTo;
+window.resolveComment=resolveComment;
+window.deleteComment=deleteComment;
 </script>
 </body>
 </html>

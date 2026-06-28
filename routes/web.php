@@ -66,6 +66,17 @@ Route::middleware('auth')->group(function () {
     Route::post('/settings/profile', [\App\Http\Controllers\SettingsController::class, 'updateProfile'])->name('settings.profile');
     Route::post('/settings/password',[\App\Http\Controllers\SettingsController::class, 'updatePassword'])->name('settings.password');
 
+    // Comments
+    Route::get('/documents/{document}/comments',         [\App\Http\Controllers\CommentController::class, 'index'])->name('comments.index');
+    Route::post('/documents/{document}/comments',        [\App\Http\Controllers\CommentController::class, 'store'])->name('comments.store');
+    Route::post('/comments/{comment}/resolve',           [\App\Http\Controllers\CommentController::class, 'resolve'])->name('comments.resolve');
+    Route::delete('/comments/{comment}',                 [\App\Http\Controllers\CommentController::class, 'destroy'])->name('comments.destroy');
+
+    // Notifications
+    Route::get('/notifications',                         [\App\Http\Controllers\NotificationController::class, 'index'])->name('notifications.index');
+    Route::post('/notifications/read-all',               [\App\Http\Controllers\NotificationController::class, 'markAllRead'])->name('notifications.readAll');
+    Route::post('/notifications/{notification}/read',    [\App\Http\Controllers\NotificationController::class, 'markRead'])->name('notifications.read');
+
     // ── VERSION HISTORY ──────────────────────────────────────────────────────
     Route::get('/documents/{document}/versions',                      [DocumentController::class, 'versionHistory'])->name('documents.versions');
     Route::post('/documents/{document}/versions',                     [DocumentController::class, 'saveVersion'])->name('documents.versions.save');
