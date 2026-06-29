@@ -1,440 +1,417 @@
-const WARNA_PENGGUNA = ['#ea4335', '#4285f4', '#fbbc05', '#34a853', '#9c27b0', '#ff5722', '#00bcd4', '#e91e63'];
+/**
+ * ZyDocs — Realtime Editor
+ * Alur: ketik → broadcast WS langsung → client lain update instan
+ *        (terpisah) autosave ke DB setiap 3 detik
+ */
 
-function dapatkanWarnaUser(idUser) {
-    return WARNA_PENGGUNA[idUser % WARNA_PENGGUNA.length];
+const WARNA = ['#ea4335','#4285f4','#fbbc05','#34a853','#9c27b0','#ff5722','#00bcd4','#e91e63'];
+const warna = id => WARNA[id % WARNA.length];
+
+// ── DOM refs ──────────────────────────────────────────────────────────────────
+const editorEl    = document.getElementById('editor');
+const inputJudul  = document.getElementById('doc-title');
+const statusEl    = document.getElementById('save-status');
+const onlineEl    = document.getElementById('online-list');
+const toastEl     = document.getElementById('toast');
+const overlay     = document.getElementById('cursor-overlay');
+
+const conflictCard    = document.getElementById('conflict-card');
+const conflictUser    = document.getElementById('conflict-card-user-name');
+const conflictTheir   = document.getElementById('conflict-card-user-edit');
+const conflictMine    = document.getElementById('conflict-card-my-edit');
+const btnTheirs       = document.getElementById('btn-resolve-theirs');
+const btnMine         = document.getElementById('btn-resolve-mine');
+const btnMerge        = document.getElementById('btn-resolve-merge');
+
+// ── Dataset ───────────────────────────────────────────────────────────────────
+const URL_BROADCAST        = editorEl.dataset.broadcastUrl;
+const URL_BROADCAST_CURSOR = editorEl.dataset.broadcastCursorUrl;
+const URL_AUTOSAVE         = editorEl.dataset.updateUrl;
+const URL_POLL             = editorEl.dataset.pollUrl;
+const URL_VERSI            = editorEl.dataset.versionUrl;
+const URL_BAGIKAN          = editorEl.dataset.shareUrl;
+const URL_HAPUS_BAGIKAN    = editorEl.dataset.removeShareUrl;
+const CSRF                 = editorEl.dataset.csrf;
+const ID_USER              = parseInt(editorEl.dataset.currentUser);
+const ID_DOK               = parseInt(editorEl.dataset.documentId);
+const BISA_EDIT            = editorEl.dataset.canEdit === '1';
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let kontenTerakhir   = editorEl.value;
+let judulTerakhir    = inputJudul.value;
+let tsDb             = parseInt(editorEl.dataset.updatedAt) || 0;
+let kursor           = null;
+let usersOnline      = {};          // { id: { id, name } }
+let konflikAktif     = false;
+let dataKonflik      = null;
+
+// throttle broadcast — kirim max 1x per 30ms
+let tBroadcast = null;
+let tAutosave  = null;
+let tCursor    = null;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const post = (url, body) => fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': CSRF },
+    body: JSON.stringify(body),
+});
+
+// ── Cursor tracking ───────────────────────────────────────────────────────────
+const updateKursor = () => { kursor = editorEl.selectionEnd; };
+
+if (BISA_EDIT) {
+    editorEl.addEventListener('click',  updateKursor);
+    editorEl.addEventListener('keyup',  updateKursor);
+    editorEl.addEventListener('focus',  updateKursor);
+    editorEl.addEventListener('input',  updateKursor);
 }
 
-const editorEl     = document.getElementById('editor');
-const inputJudul   = document.getElementById('doc-title');
-const statusSimpan = document.getElementById('save-status');
-const daftarOnline = document.getElementById('online-list');
-const toast        = document.getElementById('toast');
-
-const conflictCard      = document.getElementById('conflict-card');
-const conflictCardUser  = document.getElementById('conflict-card-user-name');
-const conflictUserEdit  = document.getElementById('conflict-card-user-edit');
-const conflictMyEdit    = document.getElementById('conflict-card-my-edit');
-const btnResolveTheirs  = document.getElementById('btn-resolve-theirs');
-const btnResolveMine    = document.getElementById('btn-resolve-mine');
-const btnResolveMerge   = document.getElementById('btn-resolve-merge');
-
-const urlPerbarui     = editorEl.dataset.updateUrl;
-const urlPoll         = editorEl.dataset.pollUrl;
-const urlVersi        = editorEl.dataset.versionUrl;
-const urlBagikan      = editorEl.dataset.shareUrl;
-const urlHapusBagikan = editorEl.dataset.removeShareUrl;
-const tokenCsrf       = editorEl.dataset.csrf;
-const idUserSekarang  = parseInt(editorEl.dataset.currentUser);
-const bisaEdit        = editorEl.dataset.canEdit === '1';
-
-let sedangMengetik     = false;
-let timerMengetik      = null;
-let kontenTerakhir     = editorEl.value;
-let judulTerakhir      = inputJudul.value;
-let waktuSimpanTerakhir = 0;
-let userTerkini        = null;
-let indeksKursorSaya   = null;
-
-let konflikSedangAktif = false;
-let dataKonflikServer  = null;
-
-function perbaruiIndeksSaya() {
-    if (editorEl.selectionEnd !== undefined && editorEl.selectionEnd !== null) {
-        indeksKursorSaya = editorEl.selectionEnd;
-    }
-}
-
-if (bisaEdit) {
-    editorEl.addEventListener('click', perbaruiIndeksSaya);
-    editorEl.addEventListener('keyup', perbaruiIndeksSaya);
-    editorEl.addEventListener('focus', perbaruiIndeksSaya);
-    editorEl.addEventListener('input', perbaruiIndeksSaya);
-
+// ── INPUT: broadcast WS dulu, autosave DB terpisah ───────────────────────────
+if (BISA_EDIT) {
     editorEl.addEventListener('input', () => {
-        sedangMengetik = true;
-        clearTimeout(timerMengetik);
-        const sekarang = Date.now();
-        if (sekarang - waktuSimpanTerakhir > 500) {
-            simpanOtomatis();
-            waktuSimpanTerakhir = sekarang;
-        }
-        timerMengetik = setTimeout(() => {
-            sedangMengetik = false;
-            simpanOtomatis();
-            waktuSimpanTerakhir = Date.now();
-        }, 200);
+        if (konflikAktif) return;
+
+        // 1) Broadcast WS — throttle 30ms, tidak tunggu DB
+        clearTimeout(tBroadcast);
+        tBroadcast = setTimeout(() => kirimBroadcast(), 30);
+
+        // 2) Autosave DB — debounce 3 detik
+        clearTimeout(tAutosave);
+        tAutosave = setTimeout(() => simpanDB(), 3000);
+    });
+
+    // Kursor bergerak tanpa input
+    editorEl.addEventListener('keyup', () => {
+        clearTimeout(tCursor);
+        tCursor = setTimeout(() => kirimKursor(), 50);
+    });
+    editorEl.addEventListener('click', () => {
+        clearTimeout(tCursor);
+        tCursor = setTimeout(() => kirimKursor(), 50);
     });
 }
 
 inputJudul.addEventListener('input', () => {
-    sedangMengetik = true;
-    clearTimeout(timerMengetik);
-    timerMengetik = setTimeout(() => {
-        sedangMengetik = false;
-        simpanOtomatis();
-    }, 200);
+    clearTimeout(tBroadcast);
+    tBroadcast = setTimeout(() => kirimBroadcast(), 30);
+    clearTimeout(tAutosave);
+    tAutosave = setTimeout(() => simpanDB(), 3000);
 });
 
-async function simpanOtomatis() {
-    if (konflikSedangAktif) return;
+// ── Broadcast ke WebSocket (ringan, tidak tunggu DB) ─────────────────────────
+function kirimBroadcast() {
+    if (konflikAktif) return;
+    post(URL_BROADCAST, {
+        konten:        editorEl.value,
+        judul:         inputJudul.value,
+        indeks_kursor: kursor,
+    }).catch(() => {});
+}
+
+// ── Broadcast kursor saja ────────────────────────────────────────────────────
+function kirimKursor() {
+    post(URL_BROADCAST_CURSOR, { indeks_kursor: kursor }).catch(() => {});
+}
+
+// ── Autosave ke DB (terpisah, lebih jarang) ───────────────────────────────────
+async function simpanDB() {
+    if (konflikAktif) return;
     const konten = editorEl.value;
     const judul  = inputJudul.value;
     if (konten === kontenTerakhir && judul === judulTerakhir) return;
-    statusSimpan.textContent = 'Menyimpan...';
-    statusSimpan.className = 'save-status saving';
+
+    statusEl.textContent = 'Menyimpan...';
+    statusEl.className   = 'save-status saving';
     try {
-        const res  = await fetch(urlPerbarui, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': tokenCsrf }, body: JSON.stringify({ konten, judul }) });
-        const data = await res.json();
-        if (data.success) {
+        const r = await post(URL_AUTOSAVE, { konten, judul });
+        const d = await r.json();
+        if (d.success) {
             kontenTerakhir = konten;
             judulTerakhir  = judul;
-            if (data.updated_at_timestamp) timestampTerakhir = data.updated_at_timestamp;
-            statusSimpan.textContent = '✓ Tersimpan ' + data.updated_at;
-            statusSimpan.className   = 'save-status saved';
+            if (d.updated_at_timestamp) tsDb = d.updated_at_timestamp;
+            statusEl.textContent = '✓ Tersimpan ' + d.updated_at;
+            statusEl.className   = 'save-status saved';
         }
-    } catch (e) {
-        statusSimpan.textContent = 'Gagal menyimpan';
-        statusSimpan.className   = 'save-status';
+    } catch {
+        statusEl.textContent = 'Gagal menyimpan';
+        statusEl.className   = 'save-status';
     }
 }
 
-function dapatkanKoordinatKursorDiIndeks(element, indeks) {
-    const div   = document.createElement('div');
-    const style = window.getComputedStyle(element);
-    document.body.appendChild(div);
-    div.style.cssText = `position:absolute;top:0;left:-9999px;white-space:pre-wrap;word-wrap:break-word;width:${element.clientWidth}px;box-sizing:border-box;`;
-    ['fontFamily','fontSize','fontWeight','lineHeight','paddingTop','paddingRight','paddingBottom','paddingLeft'].forEach(p => div.style[p] = style[p]);
-    div.textContent = element.value.substring(0, indeks);
-    const span = document.createElement('span');
-    span.textContent = element.value.substring(indeks, indeks + 1) || '.';
-    div.appendChild(span);
-    const koordinat = { atas: span.offsetTop, kiri: span.offsetLeft };
-    document.body.removeChild(div);
-    return koordinat;
-}
+// ── Terima perubahan dari WebSocket ──────────────────────────────────────────
+function terapkan(k, j, editorId, ts) {
+    if (editorId === ID_USER) return;          // abaikan diri sendiri
+    if (ts && ts < tsDb) return;               // data lama, abaikan
+    if (ts) tsDb = ts;
 
-function dapatkanPerubahanTeks(base, current) {
-    if (base === current) return "(Tidak ada perubahan)";
-    let start = 0;
-    while (start < base.length && start < current.length && base[start] === current[start]) {
-        start++;
-    }
-    let end = 0;
-    while (end < base.length - start && end < current.length - start && 
-           base[base.length - 1 - end] === current[current.length - 1 - end]) {
-        end++;
-    }
-    const perubahan = current.substring(start, current.length - end).trim();
-    return perubahan || "(Penghapusan teks)";
-}
-
-function selesaikanMergeKolaboratif(base, local, remote) {
-    if (local === base) return remote;
-    if (remote === base) return local;
-
-    let startR = 0;
-    while (startR < base.length && startR < remote.length && base[startR] === remote[startR]) {
-        startR++;
-    }
-    let endR = 0;
-    while (endR < base.length - startR && endR < remote.length - startR && 
-           base[base.length - 1 - endR] === remote[remote.length - 1 - endR]) {
-        endR++;
-    }
-
-    const remoteInsert = remote.substring(startR, remote.length - endR);
-    const remoteDeleteLen = base.length - endR - startR;
-
-    let localShift = 0;
-    let startL = 0;
-    while (startL < base.length && startL < local.length && base[startL] === local[startL]) {
-        startL++;
-    }
-    if (startL < startR) {
-        localShift = local.length - base.length;
-    }
-
-    const targetIndex = Math.max(0, startR + localShift);
-    const prefix = local.substring(0, targetIndex);
-    const suffix = local.substring(Math.max(0, targetIndex + remoteDeleteLen));
-    
-    return prefix + remoteInsert + suffix;
-}
-
-async function cekPembaruanServer() {
-    try {
-        const res  = await fetch(urlPoll, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': tokenCsrf },
-            body: JSON.stringify({ indeks_kursor: indeksKursorSaya })
-        });
-        const data = await res.json();
-        perbaruiDaftarOnline(data.pengguna_online, data.id_user_saya);
-        tampilkanKursorRemote(data.pengguna_online, data.id_user_saya);
-
-        if (data.updated_at_timestamp && data.updated_at_timestamp > timestampTerakhir) {
-            if (data.pengedit_terakhir && data.pengedit_terakhir.id !== idUserSekarang) {
-                if (editorEl.value !== data.konten && editorEl.value !== kontenTerakhir) {
-                    if (!konflikSedangAktif) {
-                        konflikSedangAktif = true;
-                        dataKonflikServer  = data;
-
-                        const editUser = dapatkanPerubahanTeks(kontenTerakhir, data.konten);
-                        const editSaya = dapatkanPerubahanTeks(kontenTerakhir, editorEl.value);
-
-                        conflictCardUser.textContent = data.pengedit_terakhir.nama;
-                        conflictUserEdit.textContent = editUser;
-                        conflictMyEdit.textContent   = editSaya;
-                        conflictCard.style.display   = 'flex';
-
-                        tampilkanToast('⚠️ Konflik ketikan terdeteksi! Gunakan panel di sudut kanan bawah untuk menyelesaikannya.', 'error');
-                    }
-                    timestampTerakhir = data.updated_at_timestamp;
-                    return;
-                }
-            }
-            timestampTerakhir = data.updated_at_timestamp;
+    // Deteksi konflik — user ini juga sedang mengetik konten berbeda
+    if (editorEl.value !== kontenTerakhir && editorEl.value !== k) {
+        if (!konflikAktif) {
+            konflikAktif = true;
+            dataKonflik  = { k, j, editorId };
+            const namaMereka = usersOnline[editorId]?.name ?? 'Pengguna lain';
+            conflictUser.textContent  = namaMereka;
+            conflictTheir.textContent = diffLabel(kontenTerakhir, k);
+            conflictMine.textContent  = diffLabel(kontenTerakhir, editorEl.value);
+            conflictCard.style.display = 'flex';
+            toast('⚠️ Konflik ketikan terdeteksi!', 'error');
         }
-
-        if (konflikSedangAktif) return;
-
-        const editOrangLain = data.pengedit_terakhir && data.pengedit_terakhir.id !== idUserSekarang;
-        if (editOrangLain && !sedangMengetik && data.konten !== editorEl.value) {
-            const posisiAwal     = editorEl.selectionStart;
-            const posisiAkhir    = editorEl.selectionEnd;
-            const sedangFokus    = document.activeElement === editorEl;
-            const scrollTopSebelum = editorEl.scrollTop;
-            
-            let selisih = 0;
-            let i = 0;
-            const valLama = editorEl.value;
-            const valBaru = data.konten;
-            const lenLama = valLama.length;
-            const lenBaru = valBaru.length;
-            while (i < lenLama && i < lenBaru && valLama[i] === valBaru[i]) {
-                i++;
-            }
-            if (i < posisiAkhir) {
-                selisih = lenBaru - lenLama;
-            }
-
-            editorEl.value  = data.konten;
-            kontenTerakhir  = data.konten;
-            if (data.judul !== inputJudul.value) { inputJudul.value = data.judul; judulTerakhir = data.judul; }
-
-            const indeksBaruAwal  = Math.max(0, posisiAwal + selisih);
-            const indeksBaruAkhir = Math.max(0, posisiAkhir + selisih);
-            editorEl.setSelectionRange(indeksBaruAwal, indeksBaruAkhir);
-            
-            if (sedangFokus) {
-                editorEl.scrollTop = scrollTopSebelum;
-            }
-            
-            if (indeksKursorSaya !== null) {
-                indeksKursorSaya = Math.max(0, indeksKursorSaya + selisih);
-            }
-
-            statusSimpan.textContent = '↺ Diperbarui ' + data.updated_at;
-            statusSimpan.className   = 'save-status saved';
-        }
-    } catch (e) {}
-}
-
-btnResolveTheirs?.addEventListener('click', () => {
-    if (!dataKonflikServer) return;
-    
-    const posisiAwal     = editorEl.selectionStart;
-    const posisiAkhir    = editorEl.selectionEnd;
-    const scrollTopSebelum = editorEl.scrollTop;
-    
-    editorEl.value = dataKonflikServer.konten;
-    kontenTerakhir = dataKonflikServer.konten;
-    
-    editorEl.setSelectionRange(posisiAwal, posisiAkhir);
-    editorEl.scrollTop = scrollTopSebelum;
-    
-    tutupKartuKonflik();
-    tampilkanToast('✓ Menggunakan ketikan mereka!');
-});
-
-btnResolveMine?.addEventListener('click', async () => {
-    if (!dataKonflikServer) return;
-    
-    kontenTerakhir = editorEl.value;
-    
-    tutupKartuKonflik();
-    statusSimpan.textContent = 'Menyimpan...';
-    statusSimpan.className = 'save-status saving';
-    
-    try {
-        const res  = await fetch(urlPerbarui, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': tokenCsrf }, body: JSON.stringify({ konten: editorEl.value, judul: inputJudul.value }) });
-        const data = await res.json();
-        if (data.success) {
-            timestampTerakhir = data.updated_at_timestamp;
-            statusSimpan.textContent = '✓ Tersimpan ' + data.updated_at;
-            statusSimpan.className   = 'save-status saved';
-            tampilkanToast('✓ Ketikan Anda berhasil dipertahankan!');
-        }
-    } catch (e) {
-        statusSimpan.textContent = 'Gagal menyimpan';
-        statusSimpan.className   = 'save-status';
-    }
-});
-
-btnResolveMerge?.addEventListener('click', async () => {
-    if (!dataKonflikServer) return;
-    
-    const posisiAwal     = editorEl.selectionStart;
-    const posisiAkhir    = editorEl.selectionEnd;
-    const sedangFokus    = document.activeElement === editorEl;
-    const scrollTopSebelum = editorEl.scrollTop;
-
-    const kontenTergabung = selesaikanMergeKolaboratif(kontenTerakhir, editorEl.value, dataKonflikServer.konten);
-    const selisih = kontenTergabung.length - editorEl.value.length;
-
-    editorEl.value = kontenTergabung;
-    kontenTerakhir = kontenTergabung;
-    
-    const indeksBaruAwal  = Math.max(0, posisiAwal + selisih);
-    const indeksBaruAkhir = Math.max(0, posisiAkhir + selisih);
-    editorEl.setSelectionRange(indeksBaruAwal, indeksBaruAkhir);
-    
-    if (sedangFokus) {
-        editorEl.scrollTop = scrollTopSebelum;
-    }
-    
-    if (indeksKursorSaya !== null) {
-        indeksKursorSaya = Math.max(0, indeksKursorSaya + selisih);
-    }
-    
-    tutupKartuKonflik();
-    statusSimpan.textContent = 'Menyimpan...';
-    statusSimpan.className = 'save-status saving';
-
-    try {
-        const res  = await fetch(urlPerbarui, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': tokenCsrf }, body: JSON.stringify({ konten: kontenTergabung, judul: inputJudul.value }) });
-        const data = await res.json();
-        if (data.success) {
-            timestampTerakhir = data.updated_at_timestamp;
-            statusSimpan.textContent = '✓ Tersimpan ' + data.updated_at;
-            statusSimpan.className   = 'save-status saved';
-            tampilkanToast('✓ Kedua ketikan berhasil digabungkan dengan rapi!');
-        }
-    } catch (e) {
-        statusSimpan.textContent = 'Gagal menyimpan';
-        statusSimpan.className   = 'save-status';
-    }
-});
-
-function tutupKartuKonflik() {
-    konflikSedangAktif = false;
-    dataKonflikServer  = null;
-    conflictCard.style.display = 'none';
-}
-
-function perbaruiDaftarOnline(daftarPengguna, idSaya) {
-    if (!daftarPengguna || daftarPengguna.length === 0) {
-        daftarOnline.innerHTML = '<div class="empty-sidebar">Tidak ada yang online</div>';
         return;
     }
-    daftarOnline.innerHTML = daftarPengguna.map(p => {
-        const warna = dapatkanWarnaUser(p.id);
-        return `<div class="online-user"><div class="online-dot" style="background:${warna}"></div><span>${p.name}${p.id === idSaya ? ' <em style="color:#888;font-size:11px">(kamu)</em>' : ''}</span></div>`;
-    }).join('');
+
+    // Terapkan langsung tanpa blokir UI
+    if (k !== editorEl.value) {
+        const s0    = editorEl.selectionStart;
+        const s1    = editorEl.selectionEnd;
+        const sc    = editorEl.scrollTop;
+        const fokus = document.activeElement === editorEl;
+
+        // Hitung pergeseran kursor
+        let i = 0;
+        while (i < editorEl.value.length && i < k.length && editorEl.value[i] === k[i]) i++;
+        const shift = i < s1 ? k.length - editorEl.value.length : 0;
+
+        editorEl.value = k;
+        kontenTerakhir = k;
+        editorEl.setSelectionRange(Math.max(0, s0 + shift), Math.max(0, s1 + shift));
+        if (fokus) editorEl.scrollTop = sc;
+        if (kursor !== null) kursor = Math.max(0, kursor + shift);
+    }
+
+    if (j && j !== inputJudul.value) {
+        inputJudul.value = j;
+        judulTerakhir    = j;
+    }
+
+    statusEl.textContent = '↺ Diperbarui';
+    statusEl.className   = 'save-status saved';
 }
 
-function tampilkanKursorRemote(daftarPengguna, idSaya) {
-    const overlay = document.getElementById('cursor-overlay');
-    if (!overlay) return;
-    const idAktif = new Set();
-    (daftarPengguna || []).forEach(p => {
-        if (p.id === idSaya || typeof p.indeks_kursor === 'undefined' || p.indeks_kursor === null || p.indeks_kursor === 0) return;
-        idAktif.add(p.id);
-        
-        const koordinat = dapatkanKoordinatKursorDiIndeks(editorEl, p.indeks_kursor);
-        let elKursor = document.getElementById('kursor-pengguna-' + p.id);
-        if (!elKursor) {
-            const warna = dapatkanWarnaUser(p.id);
-            elKursor = document.createElement('div');
-            elKursor.id = 'kursor-pengguna-' + p.id;
-            elKursor.className = 'remote-cursor';
-            elKursor.innerHTML = `<div class="remote-cursor-label" style="background:${warna}">${p.name}</div><div class="remote-cursor-caret" style="background:${warna}"></div>`;
-            overlay.appendChild(elKursor);
-        }
-        
-        elKursor.style.top  = (koordinat.atas - editorEl.scrollTop)  + 'px';
-        elKursor.style.left = (koordinat.kiri - editorEl.scrollLeft) + 'px';
-    });
-    userTerkini = daftarPengguna;
-    Array.from(overlay.children).forEach(anak => {
-        if (anak.id?.startsWith('kursor-pengguna-') && !idAktif.has(parseInt(anak.id.replace('kursor-pengguna-', '')))) overlay.removeChild(anak);
-    });
+// ── WebSocket via Laravel Echo + Reverb ───────────────────────────────────────
+function sambungWS() {
+    if (!window.Echo) { console.warn('Echo belum siap'); return; }
+
+    window.Echo.join('document.' + ID_DOK)
+        .here(users => {
+            usersOnline = {};
+            users.forEach(u => { usersOnline[u.id] = u; });
+            renderOnline();
+        })
+        .joining(u => { usersOnline[u.id] = u; renderOnline(); })
+        .leaving(u => {
+            delete usersOnline[u.id];
+            renderOnline();
+            document.getElementById('kursor-' + u.id)?.remove();
+        })
+        .listen('.doc.changed', d => {
+            // d.k=konten, d.j=judul, d.ei=editorId, d.ts=timestamp, d.c=cursor
+            terapkan(d.k, d.j, d.ei, d.ts);
+            if (d.c !== undefined && d.ei !== ID_USER) {
+                renderKursorUser(d.ei, usersOnline[d.ei]?.name ?? '?', d.c);
+            }
+        })
+        .listen('.cursor.moved', d => {
+            // d.uid=userId, d.n=name, d.c=cursor
+            if (d.uid === ID_USER) return;
+            if (usersOnline[d.uid]) usersOnline[d.uid].kursor = d.c;
+            renderKursorUser(d.uid, d.n, d.c);
+        })
+        .error(e => console.error('WS error:', e));
+
+    console.log('✓ WS terhubung — document.' + ID_DOK);
 }
 
-editorEl.addEventListener('scroll', () => { if (userTerkini) tampilkanKursorRemote(userTerkini, idUserSekarang); });
-
-setInterval(cekPembaruanServer, 500);
-cekPembaruanServer();
-
-async function simpanVersi() {
-    await simpanOtomatis();
+// ── Poll presence (presence only, bukan konten) — setiap 5 detik ─────────────
+async function pollPresence() {
     try {
-        const res  = await fetch(urlVersi, { method: 'POST', headers: { 'X-CSRF-TOKEN': tokenCsrf } });
-        const data = await res.json();
-        if (data.success) { tampilkanToast('✓ Versi tersimpan!'); setTimeout(() => location.reload(), 1500); }
-    } catch (e) { tampilkanToast('Gagal menyimpan versi', 'error'); }
+        const r = await post(URL_POLL, { indeks_kursor: kursor });
+        const d = await r.json();
+        if (d.pengguna_online) {
+            d.pengguna_online.forEach(u => {
+                if (!usersOnline[u.id]) { usersOnline[u.id] = { id: u.id, name: u.name }; }
+            });
+            renderOnline();
+        }
+        // Fallback konten hanya jika WS belum konek
+        if (!window.Echo && d.konten !== undefined) {
+            terapkan(d.konten, d.judul, d.id_user_saya === ID_USER ? -1 : 0, d.updated_at_timestamp);
+        }
+    } catch {}
 }
 
-function tampilkanToast(pesan, tipe = 'success') {
-    toast.textContent = pesan;
-    toast.style.background = tipe === 'success' ? '#34a853' : '#ea4335';
-    toast.style.color = '#fff';
-    toast.classList.add('show');
-    setTimeout(() => toast.classList.remove('show'), 3000);
+// ── Render online list ────────────────────────────────────────────────────────
+function renderOnline() {
+    const list = Object.values(usersOnline);
+    if (!list.length) { onlineEl.innerHTML = '<div class="empty-sidebar">Tidak ada yang online</div>'; return; }
+    onlineEl.innerHTML = list.map(u =>
+        `<div class="online-user">
+            <div class="online-dot" style="background:${warna(u.id)}"></div>
+            <span>${u.name}${u.id === ID_USER ? ' <em style="color:#888;font-size:11px">(kamu)</em>' : ''}</span>
+        </div>`
+    ).join('');
 }
 
-function bukaModalShare()  { document.getElementById('share-modal').classList.add('open');    document.getElementById('share-email').focus(); }
+// ── Render kursor remote ──────────────────────────────────────────────────────
+function renderKursorUser(userId, name, idx) {
+    if (!overlay || userId === ID_USER || !idx) return;
+    const pos  = kursorPos(editorEl, idx);
+    let el = document.getElementById('kursor-' + userId);
+    if (!el) {
+        const c = warna(userId);
+        el = document.createElement('div');
+        el.id        = 'kursor-' + userId;
+        el.className = 'remote-cursor';
+        el.innerHTML = `<div class="remote-cursor-label" style="background:${c}">${name}</div><div class="remote-cursor-caret" style="background:${c}"></div>`;
+        overlay.appendChild(el);
+    }
+    el.style.top  = (pos.top  - editorEl.scrollTop)  + 'px';
+    el.style.left = (pos.left - editorEl.scrollLeft) + 'px';
+}
+
+function kursorPos(el, idx) {
+    const div = document.createElement('div');
+    const s   = getComputedStyle(el);
+    document.body.appendChild(div);
+    div.style.cssText = `position:absolute;top:0;left:-9999px;white-space:pre-wrap;word-wrap:break-word;width:${el.clientWidth}px;box-sizing:border-box;`;
+    ['fontFamily','fontSize','fontWeight','lineHeight','paddingTop','paddingRight','paddingBottom','paddingLeft'].forEach(p => div.style[p] = s[p]);
+    div.textContent = el.value.substring(0, idx);
+    const sp = document.createElement('span');
+    sp.textContent = el.value[idx] || '.';
+    div.appendChild(sp);
+    const r = { top: sp.offsetTop, left: sp.offsetLeft };
+    document.body.removeChild(div);
+    return r;
+}
+
+editorEl.addEventListener('scroll', () => {
+    Object.values(usersOnline).forEach(u => {
+        if (u.id !== ID_USER && u.kursor) renderKursorUser(u.id, u.name, u.kursor);
+    });
+});
+
+// ── Conflict resolution ───────────────────────────────────────────────────────
+function diffLabel(base, cur) {
+    if (base === cur) return '(tidak ada perubahan)';
+    let s = 0; while (s < base.length && s < cur.length && base[s] === cur[s]) s++;
+    let e = 0; while (e < base.length-s && e < cur.length-s && base[base.length-1-e] === cur[cur.length-1-e]) e++;
+    return cur.substring(s, cur.length-e).trim() || '(penghapusan)';
+}
+
+function merge3(base, local, remote) {
+    if (local === base) return remote;
+    if (remote === base) return local;
+    let sR = 0; while (sR < base.length && sR < remote.length && base[sR] === remote[sR]) sR++;
+    let eR = 0; while (eR < base.length-sR && eR < remote.length-sR && base[base.length-1-eR] === remote[remote.length-1-eR]) eR++;
+    const ins = remote.substring(sR, remote.length-eR);
+    const del = base.length - eR - sR;
+    let sL = 0; while (sL < base.length && sL < local.length && base[sL] === local[sL]) sL++;
+    const shift = sL < sR ? local.length - base.length : 0;
+    const ti = Math.max(0, sR + shift);
+    return local.substring(0, ti) + ins + local.substring(Math.max(0, ti + del));
+}
+
+btnTheirs?.addEventListener('click', () => {
+    if (!dataKonflik) return;
+    const sc = editorEl.scrollTop;
+    editorEl.value = dataKonflik.k;
+    kontenTerakhir = dataKonflik.k;
+    editorEl.scrollTop = sc;
+    tutupKonflik(); toast('✓ Menggunakan ketikan mereka!');
+});
+
+btnMine?.addEventListener('click', async () => {
+    if (!dataKonflik) return;
+    kontenTerakhir = editorEl.value;
+    tutupKonflik();
+    await simpanDB();
+    toast('✓ Ketikan Anda dipertahankan!');
+});
+
+btnMerge?.addEventListener('click', async () => {
+    if (!dataKonflik) return;
+    const s0 = editorEl.selectionStart;
+    const merged = merge3(kontenTerakhir, editorEl.value, dataKonflik.k);
+    const shift  = merged.length - editorEl.value.length;
+    editorEl.value = merged; kontenTerakhir = merged;
+    editorEl.setSelectionRange(Math.max(0, s0+shift), Math.max(0, s0+shift));
+    if (kursor !== null) kursor = Math.max(0, kursor + shift);
+    tutupKonflik();
+    await simpanDB();
+    toast('✓ Kedua ketikan digabungkan!');
+});
+
+function tutupKonflik() { konflikAktif = false; dataKonflik = null; conflictCard.style.display = 'none'; }
+
+// ── Version save ──────────────────────────────────────────────────────────────
+async function simpanVersi() {
+    await simpanDB();
+    try {
+        const r = await fetch(URL_VERSI, { method: 'POST', headers: { 'X-CSRF-TOKEN': CSRF } });
+        const d = await r.json();
+        if (d.success) { toast('✓ Versi tersimpan!'); setTimeout(() => location.reload(), 1500); }
+    } catch { toast('Gagal menyimpan versi', 'error'); }
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function toast(msg, type = 'success') {
+    toastEl.textContent = msg;
+    toastEl.style.background = type === 'success' ? '#34a853' : '#ea4335';
+    toastEl.style.color = '#fff';
+    toastEl.classList.add('show');
+    setTimeout(() => toastEl.classList.remove('show'), 3000);
+}
+
+// ── Share modal ───────────────────────────────────────────────────────────────
+function bukaModalShare()  { document.getElementById('share-modal').classList.add('open'); document.getElementById('share-email').focus(); }
 function tutupModalShare() { document.getElementById('share-modal').classList.remove('open'); }
-document.getElementById('share-modal')?.addEventListener('click', function(e) { if (e.target === this) tutupModalShare(); });
+document.getElementById('share-modal')?.addEventListener('click', e => { if (e.target === e.currentTarget) tutupModalShare(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') tutupModalShare(); });
 
 async function tambahAkses() {
-    const email  = document.getElementById('share-email').value;
-    const izin   = document.getElementById('share-perm').value;
-    const errEl  = document.getElementById('share-error');
-    const sucEl  = document.getElementById('share-success');
-    const btn    = document.querySelector('.btn-add-share');
+    const email = document.getElementById('share-email').value;
+    const izin  = document.getElementById('share-perm').value;
+    const errEl = document.getElementById('share-error');
+    const sucEl = document.getElementById('share-success');
+    const btn   = document.querySelector('.btn-add-share');
     errEl.style.display = sucEl.style.display = 'none';
     if (!email) return;
     btn.disabled = true; btn.textContent = 'Memproses...';
     try {
-        const res  = await fetch(urlBagikan, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': tokenCsrf }, body: JSON.stringify({ email, permission: izin }) });
-        const data = await res.json();
+        const r = await post(URL_BAGIKAN, { email, permission: izin });
+        const d = await r.json();
         btn.disabled = false; btn.textContent = 'Bagikan';
-        if (!res.ok) { errEl.textContent = data.error || 'Terjadi kesalahan.'; errEl.style.display = 'block'; return; }
-        sucEl.textContent = data.pesan; sucEl.style.display = 'block';
+        if (!r.ok) { errEl.textContent = d.error || 'Terjadi kesalahan.'; errEl.style.display = 'block'; return; }
+        sucEl.textContent = d.pesan; sucEl.style.display = 'block';
         document.getElementById('share-email').value = '';
         document.getElementById('no-shares-msg')?.remove();
-        const kelasBadge = data.permission === 'edit' ? 'perm-edit' : 'perm-view';
-        const teksIzin   = data.permission === 'edit' ? 'Bisa Edit' : 'Hanya Lihat';
-        const existing   = document.getElementById('share-item-' + data.user.id);
-        if (existing) {
-            existing.querySelector('.share-perm').textContent = teksIzin;
-            existing.querySelector('.share-perm').className   = 'share-perm ' + kelasBadge;
-        } else {
-            document.getElementById('share-list').insertAdjacentHTML('beforeend', `<div class="share-item" id="share-item-${data.user.id}"><div class="share-avatar" style="background:${data.user.color}">${data.user.initial}</div><div class="share-user-info"><div class="sname">${data.user.name}</div><div class="semail">${data.user.email}</div></div><span class="share-perm ${kelasBadge}">${teksIzin}</span><button class="btn-remove-share" onclick="hapusAkses(${data.user.id},this)" title="Hapus akses">&times;</button></div>`);
-        }
-    } catch (e) { btn.disabled = false; btn.textContent = 'Bagikan'; errEl.textContent = 'Gagal menghubungi server.'; errEl.style.display = 'block'; }
+        const kb = d.permission === 'edit' ? 'perm-edit' : 'perm-view';
+        const ti = d.permission === 'edit' ? 'Bisa Edit' : 'Hanya Lihat';
+        const ex = document.getElementById('share-item-' + d.user.id);
+        if (ex) { ex.querySelector('.share-perm').textContent = ti; ex.querySelector('.share-perm').className = 'share-perm ' + kb; }
+        else document.getElementById('share-list').insertAdjacentHTML('beforeend',
+            `<div class="share-item" id="share-item-${d.user.id}">
+                <div class="share-avatar" style="background:${d.user.color}">${d.user.initial}</div>
+                <div class="share-user-info"><div class="sname">${d.user.name}</div><div class="semail">${d.user.email}</div></div>
+                <span class="share-perm ${kb}">${ti}</span>
+                <button class="btn-remove-share" onclick="hapusAkses(${d.user.id})" title="Hapus akses">&times;</button>
+            </div>`);
+    } catch { btn.disabled = false; btn.textContent = 'Bagikan'; errEl.textContent = 'Gagal menghubungi server.'; errEl.style.display = 'block'; }
 }
 
 async function hapusAkses(userId) {
     if (!confirm('Hapus akses untuk pengguna ini?')) return;
     try {
-        const res = await fetch(urlHapusBagikan + '/' + userId, { method: 'DELETE', headers: { 'X-CSRF-TOKEN': tokenCsrf } });
-        if (res.ok) {
+        const r = await fetch(URL_HAPUS_BAGIKAN + '/' + userId, { method: 'DELETE', headers: { 'X-CSRF-TOKEN': CSRF } });
+        if (r.ok) {
             document.getElementById('share-item-' + userId)?.remove();
             const list = document.getElementById('share-list');
-            if (list && list.children.length === 0) list.innerHTML = '<div id="no-shares-msg" style="font-size:13px;color:#bbb;text-align:center;padding:16px 0">Belum ada yang diberi akses.</div>';
+            if (list && !list.children.length) list.innerHTML = '<div id="no-shares-msg" style="font-size:13px;color:#bbb;text-align:center;padding:16px 0">Belum ada yang diberi akses.</div>';
         }
-    } catch (e) { tampilkanToast('Gagal menghapus akses'); }
+    } catch { toast('Gagal menghapus akses', 'error'); }
 }
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+sambungWS();
+setInterval(pollPresence, 5000);   // presence only, bukan konten
+pollPresence();

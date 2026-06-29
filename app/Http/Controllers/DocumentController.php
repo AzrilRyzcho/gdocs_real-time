@@ -7,6 +7,8 @@ use App\Models\DocumentVersion;
 use App\Models\DocumentOnlineUser;
 use App\Models\DocumentShare;
 use App\Models\User;
+use App\Events\DocumentChanged;
+use App\Events\CursorMoved;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
@@ -49,13 +51,58 @@ class DocumentController extends Controller
         return view('document.edit', compact('document', 'riwayatVersi', 'bisaEdit', 'adalahPemilik', 'daftarAkses'));
     }
 
+    // ── Broadcast perubahan konten via WebSocket TANPA menyentuh DB ─────────────
+    public function broadcastChange(Request $request, Document $document)
+    {
+        if (!in_array($this->cekAkses($document), ['owner', 'edit']))
+            return response()->json(['error' => 'Akses ditolak'], 403);
+
+        broadcast(new DocumentChanged(
+            documentId:   $document->id,
+            konten:       $request->konten ?? '',
+            judul:        $request->judul ?? $document->title,
+            editorId:     Auth::id(),
+            editorName:   Auth::user()->name,
+            indeksKursor: $request->indeks_kursor,
+        ));
+
+        return response()->json(['ok' => true]);
+    }
+
+    // ── Broadcast posisi kursor via WebSocket TANPA menyentuh DB ─────────────
+    public function broadcastCursor(Request $request, Document $document)
+    {
+        if ($this->cekAkses($document) === null)
+            return response()->json(['error' => 'Akses ditolak'], 403);
+
+        broadcast(new CursorMoved(
+            documentId:   $document->id,
+            userId:       Auth::id(),
+            userName:     Auth::user()->name,
+            indeksKursor: $request->indeks_kursor,
+        ));
+
+        return response()->json(['ok' => true]);
+    }
+
+    // ── Autosave ke DB — dipanggil terpisah, lebih jarang ────────────────────
     public function update(Request $request, Document $document)
     {
-        if (!in_array($this->cekAkses($document), ['owner', 'edit'])) return response()->json(['error' => 'Akses ditolak'], 403);
+        if (!in_array($this->cekAkses($document), ['owner', 'edit']))
+            return response()->json(['error' => 'Akses ditolak'], 403);
+
         $request->validate(['konten' => 'nullable|string', 'judul' => 'nullable|string|max:255']);
-        $document->update(['content' => $request->konten, 'title' => $request->judul ?? $document->title]);
+        $document->update([
+            'content' => $request->konten,
+            'title'   => $request->judul ?? $document->title,
+        ]);
         Cache::put('doc_last_editor_' . $document->id, Auth::id(), now()->addHours(2));
-        return response()->json(['success' => true, 'updated_at' => $document->updated_at->diffForHumans(), 'updated_at_timestamp' => $document->updated_at->timestamp]);
+
+        return response()->json([
+            'success'             => true,
+            'updated_at'          => $document->updated_at->diffForHumans(),
+            'updated_at_timestamp'=> $document->updated_at->timestamp,
+        ]);
     }
 
     public function saveVersion(Request $request, Document $document)
@@ -118,44 +165,42 @@ class DocumentController extends Controller
         return response()->json(['success' => true]);
     }
 
+    // ── Poll presence saja — konten sudah via WebSocket ─────────────────────
     public function poll(Request $request, Document $document)
     {
         $idUser = Auth::id();
+
         DocumentOnlineUser::updateOrCreate(
             ['document_id' => $document->id, 'user_id' => $idUser],
-            ['last_seen_at' => now(), 'cursor_top' => $request->posisi_kursor_atas ?? 0, 'cursor_left' => $request->posisi_kursor_kiri ?? 0]
+            ['last_seen_at' => now(), 'cursor_top' => 0, 'cursor_left' => 0]
         );
-
         Cache::put("doc_{$document->id}_user_{$idUser}_indeks", $request->indeks_kursor ?? 0, now()->addSeconds(10));
 
         $onlineUsers = DocumentOnlineUser::where('document_id', $document->id)
-            ->where('last_seen_at', '>=', now()->subSeconds(6))
+            ->where('last_seen_at', '>=', now()->subSeconds(8))
             ->with('user')
             ->get();
 
-        $penggunaOnline = $onlineUsers->map(function($o) use ($document) {
-            $indeks = Cache::get("doc_{$document->id}_user_{$o->user_id}_indeks", 0);
-            return [
-                'id' => $o->user->id,
-                'name' => $o->user->name,
-                'cursor_top' => $o->cursor_top,
-                'cursor_left' => $o->cursor_left,
-                'indeks_kursor' => $indeks
-            ];
-        });
-
-        $dokumen = $document->fresh();
-        $pengeditId = Cache::get('doc_last_editor_' . $document->id);
-        $pengedit = $pengeditId ? User::find($pengeditId) : null;
-
-        return response()->json([
-            'konten' => $dokumen->content,
-            'judul' => $dokumen->title,
-            'updated_at' => $dokumen->updated_at->format('H:i:s'),
-            'updated_at_timestamp' => $dokumen->updated_at->timestamp,
-            'pengguna_online' => $penggunaOnline,
-            'id_user_saya' => $idUser,
-            'pengedit_terakhir' => $pengedit ? ['id' => $pengedit->id, 'nama' => $pengedit->name] : null
+        $penggunaOnline = $onlineUsers->map(fn($o) => [
+            'id'           => $o->user->id,
+            'name'         => $o->user->name,
+            'indeks_kursor'=> Cache::get("doc_{$document->id}_user_{$o->user_id}_indeks", 0),
         ]);
+
+        // Kirim konten hanya saat pertama kali join (fallback jika WS belum konek)
+        $butuhKonten = $request->boolean('butuh_konten', false);
+        $payload = [
+            'pengguna_online' => $penggunaOnline,
+            'id_user_saya'    => $idUser,
+        ];
+
+        if ($butuhKonten) {
+            $dokumen = $document->fresh();
+            $payload['konten']               = $dokumen->content;
+            $payload['judul']                = $dokumen->title;
+            $payload['updated_at_timestamp'] = $dokumen->updated_at->timestamp;
+        }
+
+        return response()->json($payload);
     }
 }

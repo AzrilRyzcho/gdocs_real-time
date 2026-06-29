@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Broadcast;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\DocumentController;
 use App\Http\Controllers\ProfileController;
@@ -13,13 +14,8 @@ Route::middleware('guest')->group(function () {
 });
 Route::post('/logout',  [AuthController::class, 'logout'])->name('logout');
 
-Route::get('/add-col', function() {
-    if (!\Illuminate\Support\Facades\Schema::hasColumn('documents', 'last_editor_id')) {
-        \Illuminate\Support\Facades\DB::statement('ALTER TABLE documents ADD COLUMN last_editor_id BIGINT UNSIGNED NULL AFTER owner_id');
-        return "Added";
-    }
-    return "Exists";
-});
+// Broadcasting auth endpoint untuk Laravel Echo / Reverb
+Broadcast::routes(['middleware' => ['web', 'auth']]);
 
 Route::middleware('auth')->group(function () {
 
@@ -42,6 +38,10 @@ Route::middleware('auth')->group(function () {
     Route::post('/documents/{document}/version',           [DocumentController::class, 'saveVersion'])->name('document.saveVersion');
     Route::post('/documents/{document}/restore/{version}', [DocumentController::class, 'restoreVersion'])->name('document.restoreVersion');
 
-    Route::post('/api/documents/{document}/update',    [DocumentController::class, 'update'])->name('document.update');
-    Route::post('/api/documents/{document}/poll',       [DocumentController::class, 'poll'])->name('document.poll');
+    Route::post('/api/documents/{document}/update', [DocumentController::class, 'update'])->name('document.update');
+    Route::post('/api/documents/{document}/poll',   [DocumentController::class, 'poll'])->name('document.poll');
+
+    // WebSocket broadcast — tidak sentuh DB, dipanggil setiap keystroke
+    Route::post('/api/documents/{document}/broadcast',        [DocumentController::class, 'broadcastChange'])->name('document.broadcast');
+    Route::post('/api/documents/{document}/broadcast-cursor', [DocumentController::class, 'broadcastCursor'])->name('document.broadcastCursor');
 });
