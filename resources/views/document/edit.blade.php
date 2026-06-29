@@ -1,5 +1,5 @@
 @extends('layouts.app')
-@section('title', $document->title . ' - GoDocs')
+@section('title', $document->title . ' - ZyDocs')
 
 @section('styles')
     <link rel="stylesheet" href="{{ asset('css/editor.css') }}">
@@ -47,7 +47,9 @@
                     data-share-url="{{ route('document.share', $document->id) }}"
                     data-remove-share-url="{{ url('/documents/' . $document->id . '/shares') }}"
                     data-current-user="{{ Auth::id() }}" data-can-edit="{{ $bisaEdit ? '1' : '0' }}"
-                    data-is-owner="{{ $adalahPemilik ? '1' : '0' }}" data-csrf="{{ csrf_token() }}">{{ $document->content }}</textarea>
+                    data-is-owner="{{ $adalahPemilik ? '1' : '0' }}" data-csrf="{{ csrf_token() }}"
+                    data-document-id="{{ $document->id }}"
+                    data-updated-at="{{ $document->updated_at->timestamp }}">{{ $document->content }}</textarea>
                 <div id="cursor-overlay"
                     style="position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:50;overflow:hidden;">
                 </div>
@@ -156,8 +158,6 @@
 @endsection
 
 @section('scripts')
-    <script>
-        let timestampTerakhir = {{ $document->updated_at->timestamp }};
-    </script>
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
     <script src="{{ asset('js/editor.js') }}"></script>
 @endsection
