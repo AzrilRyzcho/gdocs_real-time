@@ -7,8 +7,6 @@ use App\Models\DocumentVersion;
 use App\Models\DocumentOnlineUser;
 use App\Models\DocumentShare;
 use App\Models\User;
-use App\Events\DocumentChanged;
-use App\Events\CursorMoved;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
@@ -57,19 +55,6 @@ class DocumentController extends Controller
         $request->validate(['konten' => 'nullable|string', 'judul' => 'nullable|string|max:255']);
         $document->update(['content' => $request->konten, 'title' => $request->judul ?? $document->title]);
         Cache::put('doc_last_editor_' . $document->id, Auth::id(), now()->addHours(2));
-
-        // Broadcast perubahan langsung ke semua user di channel dokumen ini
-        broadcast(new DocumentChanged(
-            documentId:          $document->id,
-            konten:              $document->content,
-            judul:               $document->title,
-            editorId:            Auth::id(),
-            editorName:          Auth::user()->name,
-            indeksKursor:        $request->indeks_kursor ?? null,
-            updatedAt:           $document->updated_at->format('H:i:s'),
-            updatedAtTimestamp:  $document->updated_at->timestamp,
-        ));
-
         return response()->json(['success' => true, 'updated_at' => $document->updated_at->diffForHumans(), 'updated_at_timestamp' => $document->updated_at->timestamp]);
     }
 
@@ -142,16 +127,6 @@ class DocumentController extends Controller
         );
 
         Cache::put("doc_{$document->id}_user_{$idUser}_indeks", $request->indeks_kursor ?? 0, now()->addSeconds(10));
-
-        // Broadcast posisi kursor via WebSocket (tidak perlu DB query di penerima)
-        if ($request->indeks_kursor !== null) {
-            broadcast(new CursorMoved(
-                documentId:   $document->id,
-                userId:       $idUser,
-                userName:     Auth::user()->name,
-                indeksKursor: $request->indeks_kursor,
-            ));
-        }
 
         $onlineUsers = DocumentOnlineUser::where('document_id', $document->id)
             ->where('last_seen_at', '>=', now()->subSeconds(6))

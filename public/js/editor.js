@@ -25,22 +25,18 @@ const urlBagikan      = editorEl.dataset.shareUrl;
 const urlHapusBagikan = editorEl.dataset.removeShareUrl;
 const tokenCsrf       = editorEl.dataset.csrf;
 const idUserSekarang  = parseInt(editorEl.dataset.currentUser);
-const idDokumen       = parseInt(editorEl.dataset.documentId);
 const bisaEdit        = editorEl.dataset.canEdit === '1';
 
-let sedangMengetik      = false;
-let timerMengetik       = null;
-let kontenTerakhir      = editorEl.value;
-let judulTerakhir       = inputJudul.value;
+let sedangMengetik     = false;
+let timerMengetik      = null;
+let kontenTerakhir     = editorEl.value;
+let judulTerakhir      = inputJudul.value;
 let waktuSimpanTerakhir = 0;
-let timestampTerakhir   = parseInt(editorEl.dataset.updatedAt) || 0;
-let userTerkini         = {};
-let indeksKursorSaya    = null;
+let userTerkini        = null;
+let indeksKursorSaya   = null;
 
 let konflikSedangAktif = false;
 let dataKonflikServer  = null;
-
-// ─── Cursor tracking ──────────────────────────────────────────────────────────
 
 function perbaruiIndeksSaya() {
     if (editorEl.selectionEnd !== undefined && editorEl.selectionEnd !== null) {
@@ -49,15 +45,11 @@ function perbaruiIndeksSaya() {
 }
 
 if (bisaEdit) {
-    editorEl.addEventListener('click',  perbaruiIndeksSaya);
-    editorEl.addEventListener('keyup',  perbaruiIndeksSaya);
-    editorEl.addEventListener('focus',  perbaruiIndeksSaya);
-    editorEl.addEventListener('input',  perbaruiIndeksSaya);
-}
+    editorEl.addEventListener('click', perbaruiIndeksSaya);
+    editorEl.addEventListener('keyup', perbaruiIndeksSaya);
+    editorEl.addEventListener('focus', perbaruiIndeksSaya);
+    editorEl.addEventListener('input', perbaruiIndeksSaya);
 
-// ─── Autosave (ke DB — berjalan di background) ────────────────────────────────
-
-if (bisaEdit) {
     editorEl.addEventListener('input', () => {
         sedangMengetik = true;
         clearTimeout(timerMengetik);
@@ -89,13 +81,9 @@ async function simpanOtomatis() {
     const judul  = inputJudul.value;
     if (konten === kontenTerakhir && judul === judulTerakhir) return;
     statusSimpan.textContent = 'Menyimpan...';
-    statusSimpan.className   = 'save-status saving';
+    statusSimpan.className = 'save-status saving';
     try {
-        const res  = await fetch(urlPerbarui, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': tokenCsrf },
-            body: JSON.stringify({ konten, judul, indeks_kursor: indeksKursorSaya })
-        });
+        const res  = await fetch(urlPerbarui, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': tokenCsrf }, body: JSON.stringify({ konten, judul }) });
         const data = await res.json();
         if (data.success) {
             kontenTerakhir = konten;
@@ -108,191 +96,6 @@ async function simpanOtomatis() {
         statusSimpan.textContent = 'Gagal menyimpan';
         statusSimpan.className   = 'save-status';
     }
-}
-
-// ─── WebSocket via Laravel Echo + Reverb ──────────────────────────────────────
-
-let channelDokumen = null;
-
-function terapkanPerubahanRemote(kontenBaru, judulBaru, editorId, updatedAt, updatedAtTimestamp) {
-    if (editorId === idUserSekarang) return; // abaikan perubahan dari diri sendiri
-
-    if (updatedAtTimestamp && updatedAtTimestamp <= timestampTerakhir) return; // sudah up-to-date
-    timestampTerakhir = updatedAtTimestamp;
-
-    // Deteksi konflik — saya sedang mengetik dan konten berbeda
-    if (sedangMengetik && editorEl.value !== kontenTerakhir && editorEl.value !== kontenBaru) {
-        if (!konflikSedangAktif) {
-            konflikSedangAktif = true;
-            dataKonflikServer  = { konten: kontenBaru, judul: judulBaru, editor_id: editorId };
-
-            const editUser = dapatkanPerubahanTeks(kontenTerakhir, kontenBaru);
-            const editSaya = dapatkanPerubahanTeks(kontenTerakhir, editorEl.value);
-
-            const namaEditor = userTerkini[editorId]?.name || 'Pengguna lain';
-            conflictCardUser.textContent = namaEditor;
-            conflictUserEdit.textContent = editUser;
-            conflictMyEdit.textContent   = editSaya;
-            conflictCard.style.display   = 'flex';
-
-            tampilkanToast('⚠️ Konflik ketikan terdeteksi!', 'error');
-        }
-        return;
-    }
-
-    // Tidak konflik — terapkan langsung
-    if (kontenBaru !== editorEl.value) {
-        const posisiAwal       = editorEl.selectionStart;
-        const posisiAkhir      = editorEl.selectionEnd;
-        const sedangFokus      = document.activeElement === editorEl;
-        const scrollTopSebelum = editorEl.scrollTop;
-
-        // Hitung pergeseran kursor
-        let selisih = 0;
-        let i = 0;
-        const lenLama = editorEl.value.length;
-        const lenBaru = kontenBaru.length;
-        while (i < lenLama && i < lenBaru && editorEl.value[i] === kontenBaru[i]) i++;
-        if (i < posisiAkhir) selisih = lenBaru - lenLama;
-
-        editorEl.value = kontenBaru;
-        kontenTerakhir = kontenBaru;
-
-        editorEl.setSelectionRange(
-            Math.max(0, posisiAwal + selisih),
-            Math.max(0, posisiAkhir + selisih)
-        );
-        if (sedangFokus) editorEl.scrollTop = scrollTopSebelum;
-        if (indeksKursorSaya !== null) indeksKursorSaya = Math.max(0, indeksKursorSaya + selisih);
-    }
-
-    if (judulBaru && judulBaru !== inputJudul.value) {
-        inputJudul.value = judulBaru;
-        judulTerakhir    = judulBaru;
-    }
-
-    statusSimpan.textContent = '↺ Diperbarui ' + updatedAt;
-    statusSimpan.className   = 'save-status saved';
-}
-
-function sambungkanWebSocket() {
-    if (typeof window.Echo === 'undefined') {
-        console.warn('Laravel Echo belum siap, fallback ke polling.');
-        return;
-    }
-
-    channelDokumen = window.Echo.join('document.' + idDokumen)
-        .here((users) => {
-            // Inisialisasi daftar user online saat pertama join
-            userTerkini = {};
-            users.forEach(u => { userTerkini[u.id] = u; });
-            renderDaftarOnline();
-        })
-        .joining((user) => {
-            userTerkini[user.id] = user;
-            renderDaftarOnline();
-        })
-        .leaving((user) => {
-            delete userTerkini[user.id];
-            delete userTerkini[user.id];
-            renderDaftarOnline();
-            // Hapus kursor user yang keluar
-            document.getElementById('kursor-pengguna-' + user.id)?.remove();
-        })
-        .listen('.document.changed', (data) => {
-            // ← Ini yang membuat update INSTAN tanpa polling
-            terapkanPerubahanRemote(
-                data.konten,
-                data.judul,
-                data.editor_id,
-                data.updated_at,
-                data.updated_at_timestamp
-            );
-        })
-        .listen('.cursor.moved', (data) => {
-            if (data.user_id === idUserSekarang) return;
-            // Update posisi kursor remote secara realtime
-            if (userTerkini[data.user_id]) {
-                userTerkini[data.user_id].indeks_kursor = data.indeks_kursor;
-            }
-            tampilkanKursorSatuUser(data.user_id, data.user_name, data.indeks_kursor);
-        })
-        .error((err) => {
-            console.error('WebSocket error:', err);
-        });
-
-    console.log('✓ WebSocket terhubung ke channel document.' + idDokumen);
-}
-
-// ─── Polling ringan — HANYA untuk presence (siapa online), bukan konten ──────
-// Polling tetap jalan tapi intervalnya lebih jarang karena konten sudah via WS
-
-async function pollPresence() {
-    try {
-        const res  = await fetch(urlPoll, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': tokenCsrf },
-            body: JSON.stringify({ indeks_kursor: indeksKursorSaya })
-        });
-        const data = await res.json();
-
-        // Update presence list dari poll (sebagai fallback/sinkronisasi)
-        if (data.pengguna_online) {
-            data.pengguna_online.forEach(u => {
-                if (!userTerkini[u.id]) userTerkini[u.id] = { id: u.id, name: u.name };
-            });
-            renderDaftarOnline();
-        }
-
-        // Fallback: jika WebSocket tidak konek, polling masih handle konten
-        if (typeof window.Echo === 'undefined' || !channelDokumen) {
-            if (data.updated_at_timestamp && data.updated_at_timestamp > timestampTerakhir) {
-                terapkanPerubahanRemote(
-                    data.konten,
-                    data.judul,
-                    data.pengedit_terakhir?.id,
-                    data.updated_at,
-                    data.updated_at_timestamp
-                );
-            }
-        }
-    } catch (e) {}
-}
-
-// ─── Render UI ────────────────────────────────────────────────────────────────
-
-function renderDaftarOnline() {
-    const users = Object.values(userTerkini);
-    if (users.length === 0) {
-        daftarOnline.innerHTML = '<div class="empty-sidebar">Tidak ada yang online</div>';
-        return;
-    }
-    daftarOnline.innerHTML = users.map(p => {
-        const warna = dapatkanWarnaUser(p.id);
-        return `<div class="online-user">
-            <div class="online-dot" style="background:${warna}"></div>
-            <span>${p.name}${p.id === idUserSekarang ? ' <em style="color:#888;font-size:11px">(kamu)</em>' : ''}</span>
-        </div>`;
-    }).join('');
-}
-
-function tampilkanKursorSatuUser(userId, userName, indeksKursor) {
-    const overlay = document.getElementById('cursor-overlay');
-    if (!overlay) return;
-    if (userId === idUserSekarang || !indeksKursor) return;
-
-    const koordinat = dapatkanKoordinatKursorDiIndeks(editorEl, indeksKursor);
-    let elKursor = document.getElementById('kursor-pengguna-' + userId);
-    if (!elKursor) {
-        const warna = dapatkanWarnaUser(userId);
-        elKursor = document.createElement('div');
-        elKursor.id        = 'kursor-pengguna-' + userId;
-        elKursor.className = 'remote-cursor';
-        elKursor.innerHTML = `<div class="remote-cursor-label" style="background:${warna}">${userName}</div><div class="remote-cursor-caret" style="background:${warna}"></div>`;
-        overlay.appendChild(elKursor);
-    }
-    elKursor.style.top  = (koordinat.atas  - editorEl.scrollTop)  + 'px';
-    elKursor.style.left = (koordinat.kiri  - editorEl.scrollLeft) + 'px';
 }
 
 function dapatkanKoordinatKursorDiIndeks(element, indeks) {
@@ -310,23 +113,17 @@ function dapatkanKoordinatKursorDiIndeks(element, indeks) {
     return koordinat;
 }
 
-editorEl.addEventListener('scroll', () => {
-    Object.values(userTerkini).forEach(u => {
-        if (u.id !== idUserSekarang && u.indeks_kursor) {
-            tampilkanKursorSatuUser(u.id, u.name, u.indeks_kursor);
-        }
-    });
-});
-
-// ─── Conflict resolution ──────────────────────────────────────────────────────
-
 function dapatkanPerubahanTeks(base, current) {
     if (base === current) return "(Tidak ada perubahan)";
     let start = 0;
-    while (start < base.length && start < current.length && base[start] === current[start]) start++;
+    while (start < base.length && start < current.length && base[start] === current[start]) {
+        start++;
+    }
     let end = 0;
-    while (end < base.length - start && end < current.length - start &&
-           base[base.length - 1 - end] === current[current.length - 1 - end]) end++;
+    while (end < base.length - start && end < current.length - start && 
+           base[base.length - 1 - end] === current[current.length - 1 - end]) {
+        end++;
+    }
     const perubahan = current.substring(start, current.length - end).trim();
     return perubahan || "(Penghapusan teks)";
 }
@@ -334,38 +131,141 @@ function dapatkanPerubahanTeks(base, current) {
 function selesaikanMergeKolaboratif(base, local, remote) {
     if (local === base) return remote;
     if (remote === base) return local;
+
     let startR = 0;
-    while (startR < base.length && startR < remote.length && base[startR] === remote[startR]) startR++;
+    while (startR < base.length && startR < remote.length && base[startR] === remote[startR]) {
+        startR++;
+    }
     let endR = 0;
-    while (endR < base.length - startR && endR < remote.length - startR &&
-           base[base.length - 1 - endR] === remote[remote.length - 1 - endR]) endR++;
-    const remoteInsert    = remote.substring(startR, remote.length - endR);
+    while (endR < base.length - startR && endR < remote.length - startR && 
+           base[base.length - 1 - endR] === remote[remote.length - 1 - endR]) {
+        endR++;
+    }
+
+    const remoteInsert = remote.substring(startR, remote.length - endR);
     const remoteDeleteLen = base.length - endR - startR;
+
+    let localShift = 0;
     let startL = 0;
-    while (startL < base.length && startL < local.length && base[startL] === local[startL]) startL++;
-    const localShift   = startL < startR ? local.length - base.length : 0;
-    const targetIndex  = Math.max(0, startR + localShift);
-    return local.substring(0, targetIndex) + remoteInsert + local.substring(Math.max(0, targetIndex + remoteDeleteLen));
+    while (startL < base.length && startL < local.length && base[startL] === local[startL]) {
+        startL++;
+    }
+    if (startL < startR) {
+        localShift = local.length - base.length;
+    }
+
+    const targetIndex = Math.max(0, startR + localShift);
+    const prefix = local.substring(0, targetIndex);
+    const suffix = local.substring(Math.max(0, targetIndex + remoteDeleteLen));
+    
+    return prefix + remoteInsert + suffix;
+}
+
+async function cekPembaruanServer() {
+    try {
+        const res  = await fetch(urlPoll, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': tokenCsrf },
+            body: JSON.stringify({ indeks_kursor: indeksKursorSaya })
+        });
+        const data = await res.json();
+        perbaruiDaftarOnline(data.pengguna_online, data.id_user_saya);
+        tampilkanKursorRemote(data.pengguna_online, data.id_user_saya);
+
+        if (data.updated_at_timestamp && data.updated_at_timestamp > timestampTerakhir) {
+            if (data.pengedit_terakhir && data.pengedit_terakhir.id !== idUserSekarang) {
+                if (editorEl.value !== data.konten && editorEl.value !== kontenTerakhir) {
+                    if (!konflikSedangAktif) {
+                        konflikSedangAktif = true;
+                        dataKonflikServer  = data;
+
+                        const editUser = dapatkanPerubahanTeks(kontenTerakhir, data.konten);
+                        const editSaya = dapatkanPerubahanTeks(kontenTerakhir, editorEl.value);
+
+                        conflictCardUser.textContent = data.pengedit_terakhir.nama;
+                        conflictUserEdit.textContent = editUser;
+                        conflictMyEdit.textContent   = editSaya;
+                        conflictCard.style.display   = 'flex';
+
+                        tampilkanToast('⚠️ Konflik ketikan terdeteksi! Gunakan panel di sudut kanan bawah untuk menyelesaikannya.', 'error');
+                    }
+                    timestampTerakhir = data.updated_at_timestamp;
+                    return;
+                }
+            }
+            timestampTerakhir = data.updated_at_timestamp;
+        }
+
+        if (konflikSedangAktif) return;
+
+        const editOrangLain = data.pengedit_terakhir && data.pengedit_terakhir.id !== idUserSekarang;
+        if (editOrangLain && !sedangMengetik && data.konten !== editorEl.value) {
+            const posisiAwal     = editorEl.selectionStart;
+            const posisiAkhir    = editorEl.selectionEnd;
+            const sedangFokus    = document.activeElement === editorEl;
+            const scrollTopSebelum = editorEl.scrollTop;
+            
+            let selisih = 0;
+            let i = 0;
+            const valLama = editorEl.value;
+            const valBaru = data.konten;
+            const lenLama = valLama.length;
+            const lenBaru = valBaru.length;
+            while (i < lenLama && i < lenBaru && valLama[i] === valBaru[i]) {
+                i++;
+            }
+            if (i < posisiAkhir) {
+                selisih = lenBaru - lenLama;
+            }
+
+            editorEl.value  = data.konten;
+            kontenTerakhir  = data.konten;
+            if (data.judul !== inputJudul.value) { inputJudul.value = data.judul; judulTerakhir = data.judul; }
+
+            const indeksBaruAwal  = Math.max(0, posisiAwal + selisih);
+            const indeksBaruAkhir = Math.max(0, posisiAkhir + selisih);
+            editorEl.setSelectionRange(indeksBaruAwal, indeksBaruAkhir);
+            
+            if (sedangFokus) {
+                editorEl.scrollTop = scrollTopSebelum;
+            }
+            
+            if (indeksKursorSaya !== null) {
+                indeksKursorSaya = Math.max(0, indeksKursorSaya + selisih);
+            }
+
+            statusSimpan.textContent = '↺ Diperbarui ' + data.updated_at;
+            statusSimpan.className   = 'save-status saved';
+        }
+    } catch (e) {}
 }
 
 btnResolveTheirs?.addEventListener('click', () => {
     if (!dataKonflikServer) return;
-    const pos = editorEl.selectionStart;
-    const scroll = editorEl.scrollTop;
+    
+    const posisiAwal     = editorEl.selectionStart;
+    const posisiAkhir    = editorEl.selectionEnd;
+    const scrollTopSebelum = editorEl.scrollTop;
+    
     editorEl.value = dataKonflikServer.konten;
     kontenTerakhir = dataKonflikServer.konten;
-    editorEl.setSelectionRange(pos, pos);
-    editorEl.scrollTop = scroll;
+    
+    editorEl.setSelectionRange(posisiAwal, posisiAkhir);
+    editorEl.scrollTop = scrollTopSebelum;
+    
     tutupKartuKonflik();
     tampilkanToast('✓ Menggunakan ketikan mereka!');
 });
 
 btnResolveMine?.addEventListener('click', async () => {
     if (!dataKonflikServer) return;
+    
     kontenTerakhir = editorEl.value;
+    
     tutupKartuKonflik();
     statusSimpan.textContent = 'Menyimpan...';
-    statusSimpan.className   = 'save-status saving';
+    statusSimpan.className = 'save-status saving';
+    
     try {
         const res  = await fetch(urlPerbarui, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': tokenCsrf }, body: JSON.stringify({ konten: editorEl.value, judul: inputJudul.value }) });
         const data = await res.json();
@@ -375,33 +275,55 @@ btnResolveMine?.addEventListener('click', async () => {
             statusSimpan.className   = 'save-status saved';
             tampilkanToast('✓ Ketikan Anda berhasil dipertahankan!');
         }
-    } catch (e) {}
+    } catch (e) {
+        statusSimpan.textContent = 'Gagal menyimpan';
+        statusSimpan.className   = 'save-status';
+    }
 });
 
 btnResolveMerge?.addEventListener('click', async () => {
     if (!dataKonflikServer) return;
-    const pos    = editorEl.selectionStart;
-    const scroll = editorEl.scrollTop;
-    const merged = selesaikanMergeKolaboratif(kontenTerakhir, editorEl.value, dataKonflikServer.konten);
-    const selisih = merged.length - editorEl.value.length;
-    editorEl.value = merged;
-    kontenTerakhir = merged;
-    editorEl.setSelectionRange(Math.max(0, pos + selisih), Math.max(0, pos + selisih));
-    editorEl.scrollTop = scroll;
-    if (indeksKursorSaya !== null) indeksKursorSaya = Math.max(0, indeksKursorSaya + selisih);
+    
+    const posisiAwal     = editorEl.selectionStart;
+    const posisiAkhir    = editorEl.selectionEnd;
+    const sedangFokus    = document.activeElement === editorEl;
+    const scrollTopSebelum = editorEl.scrollTop;
+
+    const kontenTergabung = selesaikanMergeKolaboratif(kontenTerakhir, editorEl.value, dataKonflikServer.konten);
+    const selisih = kontenTergabung.length - editorEl.value.length;
+
+    editorEl.value = kontenTergabung;
+    kontenTerakhir = kontenTergabung;
+    
+    const indeksBaruAwal  = Math.max(0, posisiAwal + selisih);
+    const indeksBaruAkhir = Math.max(0, posisiAkhir + selisih);
+    editorEl.setSelectionRange(indeksBaruAwal, indeksBaruAkhir);
+    
+    if (sedangFokus) {
+        editorEl.scrollTop = scrollTopSebelum;
+    }
+    
+    if (indeksKursorSaya !== null) {
+        indeksKursorSaya = Math.max(0, indeksKursorSaya + selisih);
+    }
+    
     tutupKartuKonflik();
     statusSimpan.textContent = 'Menyimpan...';
-    statusSimpan.className   = 'save-status saving';
+    statusSimpan.className = 'save-status saving';
+
     try {
-        const res  = await fetch(urlPerbarui, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': tokenCsrf }, body: JSON.stringify({ konten: merged, judul: inputJudul.value }) });
+        const res  = await fetch(urlPerbarui, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': tokenCsrf }, body: JSON.stringify({ konten: kontenTergabung, judul: inputJudul.value }) });
         const data = await res.json();
         if (data.success) {
             timestampTerakhir = data.updated_at_timestamp;
             statusSimpan.textContent = '✓ Tersimpan ' + data.updated_at;
             statusSimpan.className   = 'save-status saved';
-            tampilkanToast('✓ Kedua ketikan berhasil digabungkan!');
+            tampilkanToast('✓ Kedua ketikan berhasil digabungkan dengan rapi!');
         }
-    } catch (e) {}
+    } catch (e) {
+        statusSimpan.textContent = 'Gagal menyimpan';
+        statusSimpan.className   = 'save-status';
+    }
 });
 
 function tutupKartuKonflik() {
@@ -410,7 +332,49 @@ function tutupKartuKonflik() {
     conflictCard.style.display = 'none';
 }
 
-// ─── Version & Toast ──────────────────────────────────────────────────────────
+function perbaruiDaftarOnline(daftarPengguna, idSaya) {
+    if (!daftarPengguna || daftarPengguna.length === 0) {
+        daftarOnline.innerHTML = '<div class="empty-sidebar">Tidak ada yang online</div>';
+        return;
+    }
+    daftarOnline.innerHTML = daftarPengguna.map(p => {
+        const warna = dapatkanWarnaUser(p.id);
+        return `<div class="online-user"><div class="online-dot" style="background:${warna}"></div><span>${p.name}${p.id === idSaya ? ' <em style="color:#888;font-size:11px">(kamu)</em>' : ''}</span></div>`;
+    }).join('');
+}
+
+function tampilkanKursorRemote(daftarPengguna, idSaya) {
+    const overlay = document.getElementById('cursor-overlay');
+    if (!overlay) return;
+    const idAktif = new Set();
+    (daftarPengguna || []).forEach(p => {
+        if (p.id === idSaya || typeof p.indeks_kursor === 'undefined' || p.indeks_kursor === null || p.indeks_kursor === 0) return;
+        idAktif.add(p.id);
+        
+        const koordinat = dapatkanKoordinatKursorDiIndeks(editorEl, p.indeks_kursor);
+        let elKursor = document.getElementById('kursor-pengguna-' + p.id);
+        if (!elKursor) {
+            const warna = dapatkanWarnaUser(p.id);
+            elKursor = document.createElement('div');
+            elKursor.id = 'kursor-pengguna-' + p.id;
+            elKursor.className = 'remote-cursor';
+            elKursor.innerHTML = `<div class="remote-cursor-label" style="background:${warna}">${p.name}</div><div class="remote-cursor-caret" style="background:${warna}"></div>`;
+            overlay.appendChild(elKursor);
+        }
+        
+        elKursor.style.top  = (koordinat.atas - editorEl.scrollTop)  + 'px';
+        elKursor.style.left = (koordinat.kiri - editorEl.scrollLeft) + 'px';
+    });
+    userTerkini = daftarPengguna;
+    Array.from(overlay.children).forEach(anak => {
+        if (anak.id?.startsWith('kursor-pengguna-') && !idAktif.has(parseInt(anak.id.replace('kursor-pengguna-', '')))) overlay.removeChild(anak);
+    });
+}
+
+editorEl.addEventListener('scroll', () => { if (userTerkini) tampilkanKursorRemote(userTerkini, idUserSekarang); });
+
+setInterval(cekPembaruanServer, 500);
+cekPembaruanServer();
 
 async function simpanVersi() {
     await simpanOtomatis();
@@ -422,14 +386,12 @@ async function simpanVersi() {
 }
 
 function tampilkanToast(pesan, tipe = 'success') {
-    toast.textContent      = pesan;
+    toast.textContent = pesan;
     toast.style.background = tipe === 'success' ? '#34a853' : '#ea4335';
-    toast.style.color      = '#fff';
+    toast.style.color = '#fff';
     toast.classList.add('show');
     setTimeout(() => toast.classList.remove('show'), 3000);
 }
-
-// ─── Share modal ──────────────────────────────────────────────────────────────
 
 function bukaModalShare()  { document.getElementById('share-modal').classList.add('open');    document.getElementById('share-email').focus(); }
 function tutupModalShare() { document.getElementById('share-modal').classList.remove('open'); }
@@ -460,13 +422,7 @@ async function tambahAkses() {
             existing.querySelector('.share-perm').textContent = teksIzin;
             existing.querySelector('.share-perm').className   = 'share-perm ' + kelasBadge;
         } else {
-            document.getElementById('share-list').insertAdjacentHTML('beforeend',
-                `<div class="share-item" id="share-item-${data.user.id}">
-                    <div class="share-avatar" style="background:${data.user.color}">${data.user.initial}</div>
-                    <div class="share-user-info"><div class="sname">${data.user.name}</div><div class="semail">${data.user.email}</div></div>
-                    <span class="share-perm ${kelasBadge}">${teksIzin}</span>
-                    <button class="btn-remove-share" onclick="hapusAkses(${data.user.id},this)" title="Hapus akses">&times;</button>
-                </div>`);
+            document.getElementById('share-list').insertAdjacentHTML('beforeend', `<div class="share-item" id="share-item-${data.user.id}"><div class="share-avatar" style="background:${data.user.color}">${data.user.initial}</div><div class="share-user-info"><div class="sname">${data.user.name}</div><div class="semail">${data.user.email}</div></div><span class="share-perm ${kelasBadge}">${teksIzin}</span><button class="btn-remove-share" onclick="hapusAkses(${data.user.id},this)" title="Hapus akses">&times;</button></div>`);
         }
     } catch (e) { btn.disabled = false; btn.textContent = 'Bagikan'; errEl.textContent = 'Gagal menghubungi server.'; errEl.style.display = 'block'; }
 }
@@ -481,23 +437,4 @@ async function hapusAkses(userId) {
             if (list && list.children.length === 0) list.innerHTML = '<div id="no-shares-msg" style="font-size:13px;color:#bbb;text-align:center;padding:16px 0">Belum ada yang diberi akses.</div>';
         }
     } catch (e) { tampilkanToast('Gagal menghapus akses'); }
-}
-
-// ─── Init ─────────────────────────────────────────────────────────────────────
-
-// Tunggu Echo siap (di-load via Vite build)
-function init() {
-    sambungkanWebSocket();
-    // Polling presence tetap jalan sebagai fallback, interval lebih jarang
-    setInterval(pollPresence, 3000);
-    pollPresence();
-}
-
-// Echo di-load oleh Vite (app.js), tunggu sebentar agar terdefinisi
-if (typeof window.Echo !== 'undefined') {
-    init();
-} else {
-    window.addEventListener('load', () => {
-        setTimeout(init, 300);
-    });
 }
