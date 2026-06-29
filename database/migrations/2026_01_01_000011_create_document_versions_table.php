@@ -10,12 +10,11 @@ return new class extends Migration
     {
         Schema::create('document_versions', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('document_id')->constrained()->onDelete('cascade');
+            $table->foreignId('document_id')->constrained('documents')->onDelete('cascade');
+            $table->foreignId('saved_by')->constrained('users')->onDelete('cascade');
+            $table->longText('content');
             $table->string('title');
-            $table->longText('content')->nullable();
-            $table->string('editor_name', 100)->nullable();
-            $table->string('editor_color', 20)->nullable();
-            $table->timestamp('created_at')->useCurrent();
+            $table->timestamps();
         });
     }
 

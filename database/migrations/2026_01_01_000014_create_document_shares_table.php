@@ -1,24 +1,28 @@
 <?php
+
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
-        Schema::create('comments', function (Blueprint $table) {
+        Schema::create('document_shares', function (Blueprint $table) {
             $table->id();
             $table->foreignId('document_id')->constrained()->onDelete('cascade');
             $table->foreignId('user_id')->constrained()->onDelete('cascade');
-            $table->foreignId('parent_id')->nullable()->constrained('comments')->onDelete('cascade');
-            $table->text('body');
-            $table->boolean('resolved')->default(false);
+            // 'view' = hanya bisa baca | 'edit' = bisa edit konten
+            $table->enum('permission', ['view', 'edit'])->default('view');
             $table->timestamps();
+
+            // Satu user hanya bisa punya satu share per dokumen
+            $table->unique(['document_id', 'user_id']);
         });
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('comments');
+        Schema::dropIfExists('document_shares');
     }
 };
